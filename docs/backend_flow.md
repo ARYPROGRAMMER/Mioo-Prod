@@ -22,33 +22,33 @@ flowchart TD
     subgraph StateManagement [State Processing]
         StateLoad --> EmotionAnalysis
         StateLoad --> StateEncoder
-        
+
         subgraph UserState [User State Components]
             KnowledgeState["Knowledge State
                 - Overall Level
                 - Topic Mastery
                 - Learning Speed
                 - Recent Performance"]
-            
+
             EngagementState["Engagement Metrics
                 - Interaction Rate
                 - Message Length
                 - Response Time
                 - Session Duration"]
-                
+
             PersonalityState["Personal Traits
                 - Learning Style
                 - Interests
                 - Difficulty Preference
                 - Communication Style"]
-                
+
             EmotionalState["Emotional Context
                 - Current Emotion
                 - Frustration Level
                 - Confusion Patterns
                 - Sentiment History"]
         end
-        
+
         StateEncoder --> |Encode| StateVector
         KnowledgeState --> StateEncoder
         EngagementState --> StateEncoder
@@ -62,7 +62,7 @@ flowchart TD
         ChatHistory[(Chat History)]
         Metrics[(Learning Metrics)]
         LongTermMem[(Long Term Memory)]
-        
+
         StateLoad --> UserStates
         ChatHistory --> StateLoad
         Metrics --> StateLoad
@@ -81,39 +81,39 @@ flowchart TD
     %% Enhanced Reward System
     subgraph RewardSystem [Reward Calculation]
         Response --> RewardCalc
-        
+
         subgraph RewardComponents [Reward Components]
             KnowledgeReward["Knowledge Gain (3x)
                 - Topic Understanding
                 - Concept Mastery
                 - Test Performance
                 - Application Ability"]
-                
+
             EngagementReward["Engagement (2x)
                 - Response Quality
                 - Interaction Length
                 - Focus Metrics
                 - Initiative Level"]
-                
+
             QualityReward["Quality Metrics (1x)
                 - Response Relevance
                 - Context Usage
                 - Example Quality
                 - Explanation Clarity"]
-                
+
             ExplorationReward["Exploration (0.5x)
                 - New Topics
                 - Varied Approaches
                 - Learning Paths
                 - Topic Connections"]
-                
+
             EmotionalReward["Emotional Impact (1.5x)
                 - Sentiment Change
                 - Frustration Reduction
                 - Confidence Boost
                 - Motivation Level"]
         end
-        
+
         RewardCalc --> |Combine| FinalReward[Final Reward Score]
         KnowledgeReward --> RewardCalc
         EngagementReward --> RewardCalc
@@ -125,7 +125,7 @@ flowchart TD
     %% Enhanced RL System
     subgraph RLSystem [Reinforcement Learning]
         StateVector --> PolicyNetwork
-        
+
         subgraph TeachingStrategies [Teaching Strategies]
             Strategy1["Detailed (Complex)
                 - In-depth explanations
@@ -148,7 +148,7 @@ flowchart TD
                 - Progressive difficulty
                 - Checkpoints"]
         end
-        
+
         PolicyNetwork --> |Select| TeachingStrategies
         TeachingStrategies --> ActionSelection[Strategy Selection]
     end
@@ -158,11 +158,11 @@ flowchart TD
         TeachingStrategy --> PromptGen[Prompt Generation]
         EmotionAnalysis --> PromptGen
         PromptGen --> ModelOrch[Model Orchestrator]
-        
+
         ModelOrch --> |Complex| GPT4[GPT-4]
         ModelOrch --> |Simple| GPT35[GPT-3.5]
         ModelOrch --> |Analysis| GPT4Turbo[GPT-4 Turbo]
-        
+
         GPT4 --> ResponseGen[Response Generation]
         GPT35 --> ResponseGen
         GPT4Turbo --> ResponseGen
@@ -176,7 +176,7 @@ flowchart TD
     %% Metrics Update
     Response --> MetricsUpdate[Update Metrics]
     MetricsUpdate --> Metrics
-    
+
     %% Training Trigger
     ExpBuffer --> |Check Size >= 32| TrainingTrigger[Training Trigger]
     TrainingTrigger --> |Start Training| Training
@@ -184,29 +184,29 @@ flowchart TD
     %% Enhanced Personalization
     subgraph Personalization [Personalization Engine]
         ActionSelection --> PersonalizationRules
-        
+
         subgraph PersonalizationRules [Adaptation Rules]
             LearningRule["Learning Adaptation
                 - Difficulty adjustment
                 - Pace modification
                 - Example complexity"]
-            
+
             StyleRule["Style Adaptation
                 - Communication mode
                 - Explanation depth
                 - Language level"]
-            
+
             EmotionalRule["Emotional Adaptation
                 - Encouragement level
                 - Support messages
                 - Approach adjustment"]
-            
+
             ContentRule["Content Adaptation
                 - Topic selection
                 - Example choice
                 - Practice type"]
         end
-        
+
         PersonalizationRules --> PromptGen
     end
 
@@ -236,44 +236,52 @@ flowchart TD
 ## Complete Flow Description
 
 1. **Frontend Interaction**
+
    - User interacts with Next.js chat interface
    - Input validated and formatted
    - API request sent to backend
    - Real-time metrics display updated
 
 2. **API Layer Processing**
+
    - FastAPI receives request
    - Rate limiting and auth checks
    - User state loaded from MongoDB
 
 3. **State Processing**
+
    - Emotion analysis performed
    - State encoded into 10D vector
    - Current context retrieved
 
 4. **Database Integration**
+
    - User states managed
    - Chat history stored
    - Metrics tracked
    - Long-term memory maintained
 
 5. **RL Decision Making**
+
    - Policy network evaluates state
    - Teaching strategy selected
    - Experience collected for training
 
 6. **OpenAI Integration**
+
    - Prompt generated with context
    - Appropriate model selected
    - Response generated
 
 7. **Response Processing**
+
    - Response sent to frontend
    - State updated
    - Metrics calculated
    - Memory updated
 
 8. **Training Loop**
+
    - Experience buffer checked
    - PPO training triggered at threshold
    - Policy network updated
@@ -288,6 +296,7 @@ flowchart TD
 ## Detailed Technical Flow
 
 1. **Frontend Components (Next.js)**
+
    - `ChatInterface.tsx` manages real-time chat state and messages array
    - WebSocket connection maintains live metrics updates
    - Input preprocessing includes:
@@ -300,6 +309,7 @@ flowchart TD
      - Topic mastery radar charts
 
 2. **API Layer (FastAPI)**
+
    - Rate limiting: 60 requests/minute per user
    - Authentication using JWT tokens
    - Request validation through Pydantic models:
@@ -310,6 +320,7 @@ flowchart TD
    - Asynchronous endpoint handling with error recovery
 
 3. **State Management**
+
    - Emotion Detection:
      - VADER sentiment analysis
      - Pattern matching for confusion/frustration
@@ -331,6 +342,7 @@ flowchart TD
      ```
 
 4. **Memory System**
+
    - Long-term memory using embedding similarity search
    - Context retrieval based on:
      - Semantic similarity (cosine distance)
@@ -339,11 +351,12 @@ flowchart TD
    - Memory consolidation through periodic pruning
    - Importance scoring algorithm:
      ```python
-     importance = base_score * age_factor + 
+     importance = base_score * age_factor +
                  emotion_boost + repetition_boost
      ```
 
 5. **RL Components**
+
    - Policy Network Architecture:
      ```python
      PolicyNetwork(
@@ -360,6 +373,7 @@ flowchart TD
      - Entropy coefficient: 0.01
 
 6. **Reward System**
+
    - Composite Reward Function:
      ```python
      reward = (
@@ -374,6 +388,7 @@ flowchart TD
    - Immediate and delayed reward components
 
 7. **OpenAI Integration**
+
    - Model Selection Logic:
      - GPT-4: Complex queries, confused users
      - GPT-3.5: Simple clarifications, engaged users
@@ -387,6 +402,7 @@ flowchart TD
    - Context window optimization
 
 8. **Database Layer (MongoDB)**
+
    - Collections:
      - user_states: Current learning states
      - chat_history: Interaction logs
@@ -403,6 +419,7 @@ flowchart TD
    - Caching with TTL for active users
 
 9. **Training Pipeline**
+
    - Experience Collection:
      1. State observation
      2. Action selection
