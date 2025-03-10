@@ -7,7 +7,11 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "Mioo - AI Tutor",
   description:
-    "Your personalized AI tutor powered by advanced machine learning",
+    "Your personalized AI tutor powered by reinforcement learning and advanced machine learning",
+  viewport: "width=device-width, initial-scale=1",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
@@ -16,8 +20,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>{children}</body>
+    <html lang="en" className="h-full">
+      <body className={`${inter.className} h-full antialiased`}>
+        {children}
+      </body>
     </html>
   );
 }

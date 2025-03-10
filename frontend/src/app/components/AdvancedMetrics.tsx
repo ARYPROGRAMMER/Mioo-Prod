@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { UserState, TeachingStrategy, LearningMetrics } from "../types";
+import {
+  UserState,
+  TeachingStrategy,
+  LearningMetrics,
+  EnhancedMetrics,
+} from "../types";
 import {
   LineChart,
   Line,
@@ -22,22 +27,6 @@ const DetailedMetricsPanel = dynamic(() => import("./DetailedMetricsPanel"), {
 const TopicKnowledgeGraph = dynamic(() => import("./TopicKnowledgeGraph"), {
   loading: () => <div>Loading knowledge graph...</div>,
 });
-
-interface EnhancedMetrics extends LearningMetrics {
-  rl_stats: {
-    policy_loss: number;
-    value_loss: number;
-    entropy: number;
-    learning_rate: number;
-    success_rate: number;
-  };
-  adaptive_metrics: {
-    strategy_adaptation_rate: number;
-    response_quality_trend: number[];
-    context_relevance: number;
-    personalization_score: number;
-  };
-}
 
 interface AdvancedMetricsProps {
   userState: UserState;
@@ -85,7 +74,7 @@ export default function AdvancedMetrics({
   const renderDetailedMetrics = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <DetailedMetricsPanel
-        metrics={detailedMetrics}
+        metrics={detailedMetrics || null}
         learningHistory={learningHistory}
       />
       <TopicKnowledgeGraph
@@ -95,8 +84,9 @@ export default function AdvancedMetrics({
     </div>
   );
 
+  // Safe rendering for RL metrics with proper type checks
   const renderRLMetrics = () => {
-    if (!enhancedMetrics?.rl_stats) return null;
+    if (!enhancedMetrics || !enhancedMetrics.rl_stats) return null;
 
     const { rl_stats } = enhancedMetrics;
     return (
@@ -131,38 +121,40 @@ export default function AdvancedMetrics({
           </div>
         </div>
 
-        <div className="mt-4">
-          <h4 className="font-medium mb-2">Adaptation Metrics</h4>
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <span>Strategy Adaptation</span>
-              <span
-                className={getMetricColor(
-                  enhancedMetrics.adaptive_metrics.strategy_adaptation_rate
-                )}
-              >
-                {(
-                  enhancedMetrics.adaptive_metrics.strategy_adaptation_rate *
-                  100
-                ).toFixed(1)}
-                %
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>Personalization</span>
-              <span
-                className={getMetricColor(
-                  enhancedMetrics.adaptive_metrics.personalization_score
-                )}
-              >
-                {(
-                  enhancedMetrics.adaptive_metrics.personalization_score * 100
-                ).toFixed(1)}
-                %
-              </span>
+        {enhancedMetrics.adaptive_metrics && (
+          <div className="mt-4">
+            <h4 className="font-medium mb-2">Adaptation Metrics</h4>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <span>Strategy Adaptation</span>
+                <span
+                  className={getMetricColor(
+                    enhancedMetrics.adaptive_metrics.strategy_adaptation_rate
+                  )}
+                >
+                  {(
+                    enhancedMetrics.adaptive_metrics.strategy_adaptation_rate *
+                    100
+                  ).toFixed(1)}
+                  %
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Personalization</span>
+                <span
+                  className={getMetricColor(
+                    enhancedMetrics.adaptive_metrics.personalization_score
+                  )}
+                >
+                  {(
+                    enhancedMetrics.adaptive_metrics.personalization_score * 100
+                  ).toFixed(1)}
+                  %
+                </span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     );
   };
@@ -443,20 +435,22 @@ export default function AdvancedMetrics({
         </div>
       )}
 
-      {/* Real-time metrics updates */}
-      {enhancedMetrics && (
-        <div className="fixed bottom-4 right-4 space-y-2">
+      {/* Real-time metrics updates - fixed with proper null checks */}
+      {enhancedMetrics && enhancedMetrics.rl_stats && (
+        <div className="fixed bottom-4 right-4 space-y-2 z-50 hidden md:block">
           <div className="bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg">
             Learning Rate:{" "}
             {(enhancedMetrics.rl_stats.learning_rate * 100).toFixed(1)}%
           </div>
-          <div className="bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg">
-            Adaptation Score:{" "}
-            {(
-              enhancedMetrics.adaptive_metrics.strategy_adaptation_rate * 100
-            ).toFixed(1)}
-            %
-          </div>
+          {enhancedMetrics.adaptive_metrics && (
+            <div className="bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg">
+              Adaptation Score:{" "}
+              {(
+                enhancedMetrics.adaptive_metrics.strategy_adaptation_rate * 100
+              ).toFixed(1)}
+              %
+            </div>
+          )}
         </div>
       )}
     </div>
