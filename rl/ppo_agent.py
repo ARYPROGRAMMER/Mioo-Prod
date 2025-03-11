@@ -3,10 +3,10 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import random
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 
 # Constants
-STATE_DIM = 10  # Input state dimensions
+STATE_DIM = 11  # Updated to match the state vector in learning_system.py
 ACTION_DIM = 5  # Output action dimensions (teaching strategies)
 HIDDEN_LAYERS = [64, 32]
 LEARNING_RATE = 0.001
@@ -107,13 +107,21 @@ class PPOAgent:
         if load_path:
             self.load_model(load_path)
     
-    def select_action(self, state):
-        """Select a teaching strategy action based on user state"""
+    def select_action(self, state, user_state=None):
+        """Select action with user preference consideration"""
         if not isinstance(state, torch.Tensor):
             state = torch.FloatTensor(state).unsqueeze(0)
             
         with torch.no_grad():
             probs = self.policy_net(state)
+            
+            # Adjust probabilities based on user preferences
+            if user_state and user_state.get("preferred_style"):
+                preferred_idx = self._get_preferred_strategy_idx(user_state["preferred_style"])
+                if preferred_idx is not None:
+                    probs[0][preferred_idx] *= 1.2  # Boost preferred strategy probability
+                    probs = torch.softmax(probs, dim=-1)  # Renormalize
+            
             dist = torch.distributions.Categorical(probs)
             action = dist.sample()
             log_prob = dist.log_prob(action)
@@ -127,8 +135,10 @@ class PPOAgent:
                       response_quality, 
                       exploration_score, 
                       emotional_improvement,
-                      user_feedback=None):
-        """Enhanced reward calculation with user feedback"""
+                      user_feedback=None,
+                      user_state=None):
+        """Enhanced reward calculation with user preferences"""
+        # Base reward calculation
         base_reward = (
             3.0 * knowledge_gain +
             2.0 * engagement_delta +
@@ -137,13 +147,24 @@ class PPOAgent:
             1.5 * emotional_improvement
         )
         
-        # Incorporate user feedback if available
-        if user_feedback is not None:
-            feedback_multiplier = 1.2 if user_feedback == "like" else 0.8
-            return base_reward * feedback_multiplier
+        # User preference multiplier
+        preference_multiplier = 1.0
+        if user_state and user_state.get("interests"):
+            # Check if response matched user interests
+            interest_alignment = any(
+                interest.lower() in user_state.get("last_response", "").lower() 
+                for interest in user_state.get("interests", [])
+            )
+            if interest_alignment:
+                preference_multiplier *= 1.2
         
-        return base_reward
-    
+        # Explicit feedback multiplier
+        if user_feedback:
+            feedback_multiplier = 1.2 if user_feedback == "like" else 0.8
+            return base_reward * preference_multiplier * feedback_multiplier
+        
+        return base_reward * preference_multiplier
+
     async def train(self):
         """Enhanced PPO training with feedback integration"""
         if len(self.memory) < self.memory.batch_size:
@@ -205,3 +226,14 @@ class PPOAgent:
         self.value_net.load_state_dict(checkpoint['value_state_dict'])
         self.policy_optimizer.load_state_dict(checkpoint['policy_optimizer'])
         self.value_optimizer.load_state_dict(checkpoint['value_optimizer'])
+
+    def _get_preferred_strategy_idx(self, preferred_style: str) -> Optional[int]:
+        """Map preferred style to strategy index"""
+        style_map = {
+            "detailed": 0,
+            "concise": 1,
+            "interactive": 2,
+            "analogy-based": 3,
+            "step-by-step": 4
+        }
+        return style_map.get(preferred_style)

@@ -154,9 +154,12 @@ async def get_user_endpoint(user_id: str, db: MongoDB = Depends(get_db)):
         user = await db.get_user(user_id)
         if not user:
             user = await db.create_user(user_id)
-        return JSONResponse(content=CustomJSONEncoder.encode(user))
+        
+        # Use the CustomJSONEncoder directly on the user object
+        serialized_user = CustomJSONEncoder.encode(user)
+        return serialized_user
     except Exception as e:
-        logger.error(f"Error getting user: {e}")
+        logger.error(f"Error getting user: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Update user endpoint
@@ -189,25 +192,43 @@ async def update_user_endpoint(
 
 # Feedback endpoint
 @app.post("/feedback")
-async def feedback_endpoint(
-    request: FeedbackRequest,
-    db: MongoDB = Depends(get_db)
-):
-    """Store user feedback for a message"""
+async def submit_feedback(request: FeedbackRequest, db: MongoDB = Depends(get_db)):
+    """Submit user feedback for a specific message"""
+    logger.info(f"Received feedback: {request.feedback} for message: {request.message_id} from user: {request.user_id}")
     try:
-        success = await db.store_feedback(
+        # First store the feedback
+        feedback_stored = await db.store_feedback(
             request.user_id,
             request.message_id,
             request.feedback
         )
         
-        if not success:
+        if not feedback_stored:
+            logger.error(f"Failed to store feedback in database")
             raise HTTPException(status_code=500, detail="Failed to store feedback")
         
-        return {"message": "Feedback stored successfully"}
+        # Then process it through the learning system
+        try:
+            system = await get_learning_system()
+            result = await system.process_feedback(
+                request.user_id,
+                request.message_id,
+                request.feedback
+            )
+            logger.info(f"Feedback processed successfully")
+            return result
+        except Exception as e:
+            # Still return success even if RL processing fails
+            # We already stored the feedback in DB
+            logger.error(f"Error in RL feedback processing: {e}", exc_info=True)
+            return {"status": "partial", "feedback_stored": True, "feedback_processed": False}
+            
     except Exception as e:
-        logger.error(f"Error storing feedback: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error processing feedback: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to process feedback: {str(e)}"
+        )
 
 # Learning progress endpoint
 @app.get("/learning-progress/{user_id}")

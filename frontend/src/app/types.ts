@@ -81,8 +81,6 @@ export interface UserState {
   session_metrics: SessionMetrics;
   learning_style?: LearningStyle;
   feedback_history?: Array<"like" | "dislike">;
-  current_metrics: any;
-  detailed_metrics: any;
 }
 
 export interface MessageAnalysis {

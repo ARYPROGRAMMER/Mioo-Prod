@@ -1,123 +1,40 @@
-"use client";
-import { useState } from "react";
-import { Chat } from "./components/Chat";
-import { Message, ChatResponse, UserState, TeachingStrategy } from "./types";
-import AdvancedMetricsWrapper  from "./components/AdvancedMetricsWrapper";
-
-interface ExtendedMessage extends Message {
-  teachingStrategy?: TeachingStrategy;
-}
+import ChatInterface from "./components/ChatInterface";
 
 export default function Home() {
-  const [messages, setMessages] = useState<ExtendedMessage[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [userState, setUserState] = useState<UserState | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSendMessage = async (content: string) => {
-    if (!content.trim()) return;
-
-    setIsLoading(true);
-    setError(null);
-
-    // Add user message immediately
-    const userMessage: ExtendedMessage = {
-      role: "user",
-      content,
-      timestamp: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, userMessage]);
-
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: content,
-          user_id: userState?.user_id || "new_user",
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data: ChatResponse = await response.json();
-
-      // Add assistant message with teaching strategy
-      const assistantMessage: ExtendedMessage = {
-        role: "assistant",
-        content: data.response,
-        timestamp: new Date().toISOString(),
-        teachingStrategy: data.teaching_strategy,
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-
-      // Update user state if available
-      if ("user_state" in data) {
-        setUserState(data.user_state as UserState);
-      }
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "An unknown error occurred";
-      setError(errorMessage);
-      console.error("Error:", error);
-
-      // Add error message to chat
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "I apologize, but I encountered an error. Please try again.",
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const userId = "user-" + Math.random().toString(36).substr(2, 9);
 
   return (
-    <main className="container mx-auto p-4 md:p-8 min-h-screen bg-gradient-to-b from-gray-50 to-gray-100">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Chat section */}
-        <div className="lg:col-span-2">
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-3xl font-bold text-gray-800">Mioo AI Tutor</h1>
-            {error && (
-              <div className="text-red-500 text-sm animate-fade-in">
-                {error}
-              </div>
-            )}
-          </div>
+    <main className="min-h-screen bg-gradient-to-br from-gray-50 via-indigo-50/30 to-violet-50/30">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10 max-w-[1800px] h-screen flex flex-col">
+        <header className="mb-4 md:mb-6 text-center">
+          <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight mb-2">
+            <span className="bg-clip-text text-transparent bg-gradient-to-r from-violet-600 to-indigo-600">
+              Mioo
+            </span>
+            <span className="text-gray-800"> AI Tutor</span>
+          </h1>
+          <p className="text-gray-500 text-sm md:text-base max-w-2xl mx-auto">
+            Personalized learning powered by reinforcement learning and advanced
+            AI
+          </p>
+        </header>
 
-          <div className="glass-morphism">
-            <Chat
-              messages={messages}
-              isLoading={isLoading}
-              onSendMessage={handleSendMessage}
-            />
-          </div>
+        <div className="flex-1 overflow-hidden pb-4 h-[calc(100vh-160px)]">
+          <ChatInterface userId={userId} />
         </div>
 
-        {/* Metrics section */}
-        <div className="lg:col-span-1">
-          {userState && (
-            <div className="glass-morphism p-4">
-              <AdvancedMetricsWrapper
-                userState={userState}
-                currentStrategy={
-                  messages.length > 0
-                    ? messages[messages.length - 1].teachingStrategy ?? null
-                    : null
-                }
-                learningHistory={userState.learning_history || []}
-                currentMetrics={userState.current_metrics}
-                detailedMetrics={userState.detailed_metrics}
-              />
+        <footer className="mt-2 pt-2 border-t border-gray-200">
+          <div className="flex flex-col md:flex-row justify-between items-center text-xs text-gray-400">
+            <div className="mb-1 md:mb-0">
+              © {new Date().getFullYear()} Mioo AI Tutor | All rights reserved
             </div>
-          )}
-        </div>
+            <div className="flex space-x-4">
+              <span>Privacy Policy</span>
+              <span>Terms of Service</span>
+              <span>Help</span>
+            </div>
+          </div>
+        </footer>
       </div>
     </main>
   );

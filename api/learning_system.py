@@ -5,6 +5,7 @@ from typing import Dict, List, Any, Optional, Tuple
 import torch
 import numpy as np
 import re
+import uuid
 
 # Use absolute imports instead of relative imports
 from rl.ppo_agent import PPOAgent
@@ -50,24 +51,66 @@ class LearningSystem:
     async def process_message(self, user_id: str, message: str) -> Dict[str, Any]:
         """Process a user message and generate a response with adaptive learning"""
         try:
-            # Initialize or get user
+            # Get user and full chat history
             user = await self.db.get_user(user_id)
             if not user:
                 user = await self.db.create_user(user_id)
                 
+            # Ensure chat history is loaded
+            chat_history = await self.db.get_chat_history(user_id)
+            user["chat_history"] = chat_history
+            
+            # Track conversation thread for context
+            conversation_thread = {
+                "current_topic": None,
+                "last_assistant_message": None,
+                "context_switches": 0
+            }
+            
+            # Get last assistant message for context
+            if chat_history:
+                for msg in reversed(chat_history):
+                    if msg["role"] == "assistant":
+                        conversation_thread["last_assistant_message"] = msg
+                        break
+                        
+            # Detect topic changes
+            current_focus = self._detect_topic(message)
+            if conversation_thread["current_topic"] and current_focus != conversation_thread["current_topic"]:
+                conversation_thread["context_switches"] += 1
+            conversation_thread["current_topic"] = current_focus
+            
+            # Add conversation thread to user state for context
+            user["conversation_thread"] = conversation_thread
+            
+            # Check for user introduction and update state
+            intro_info = self._check_introduction(message)
+            if intro_info:
+                user.update(intro_info)
+                await self.db.update_user(user_id, user)
+                
+            # Log user state for debugging personalization    
+            logger.info(f"Processing message for user {user_id} with state: knowledge={user.get('knowledge_level', 0.5):.2f}, engagement={user.get('engagement', 0.5):.2f}")
+            
+            # Message analysis for context understanding
+            message_context = self._analyze_message_context(message, user.get("chat_history", []))
+            logger.info(f"Message context: {message_context}")
+            
             # 1. Convert user state to tensor for RL
             state_tensor = self._user_state_to_tensor(user)
             
-            # 2. Select action (teaching strategy) using RL agent
+            # 2. Select action (teaching strategy) using RL agent - this is the personalization point
             action_idx, log_prob, value = self.rl_agent.select_action(state_tensor)
             teaching_strategy = self.teaching_strategies[action_idx]
             
-            # 3. Generate response using LLM with the selected strategy
+            logger.info(f"Selected teaching strategy for user {user_id}: {teaching_strategy['style']} (complexity: {teaching_strategy['complexity']})")
+            
+            # 3. Generate response using LLM with the selected strategy and FULL chat history
             llm_response = await self.llm.generate_response(
                 message=message,
-                user_state=user,
+                user_state=user,  # Pass complete user state for personalization
                 teaching_strategy=teaching_strategy,
-                chat_history=user.get("chat_history", [])[-5:]  # Use last 5 messages as context
+                chat_history=user.get("chat_history", [])  # Pass all available chat history for context
             )
             
             # 4. Extract topics and calculate metrics
@@ -91,6 +134,7 @@ class LearningSystem:
                 "content": llm_response["response"],
                 "timestamp": datetime.utcnow().isoformat(),
                 "teaching_strategy": teaching_strategy,
+                "message_id": str(uuid.uuid4())  # Add unique ID to message
             }
             await self.db.add_message_to_history(user_id, assistant_message)
             
@@ -106,7 +150,7 @@ class LearningSystem:
             next_state_tensor = self._user_state_to_tensor(updated_state)
             reward = self.rl_agent.compute_reward(
                 metrics["knowledge_gain"],
-                metrics["engagement_level"] - user["engagement"],
+                metrics["engagement_level"] - user.get("engagement", 0.5),
                 metrics["interaction_quality"],
                 len(detected_topics) * 0.1,  # Exploration score
                 0.0  # Emotional improvement (not implemented in this version)
@@ -120,6 +164,27 @@ class LearningSystem:
                 log_prob, 
                 value
             )
+            
+            # Store interaction for future feedback - Ensure we clean the state before storing
+            try:
+                await self.db.store_interaction(
+                    user_id=user_id,
+                    message_id=assistant_message["message_id"],
+                    action_idx=action_idx,
+                    action_log_prob=log_prob,
+                    value=value,
+                    metrics={
+                        "knowledge_gain": metrics["knowledge_gain"],
+                        "engagement_delta": metrics["engagement_level"] - user.get("engagement", 0.5),
+                        "response_quality": metrics["interaction_quality"],
+                        "exploration_score": len(detected_topics) * 0.1,
+                        "emotional_improvement": 0.0
+                    },
+                    user_state=user
+                )
+            except Exception as e:
+                # Log the error but don't fail the entire message processing
+                logger.error(f"Failed to store interaction: {e}")
             
             # 10. Periodically train the RL agent
             training_metrics = None
@@ -154,7 +219,7 @@ class LearningSystem:
             }
     
     def _user_state_to_tensor(self, user: Dict[str, Any]) -> torch.Tensor:
-        """Enhanced user state representation"""
+        """Enhanced user state representation - ensure exactly 11 dimensions"""
         # Core metrics
         knowledge_level = user.get("knowledge_level", 0.5)
         engagement = user.get("engagement", 0.5)
@@ -169,16 +234,21 @@ class LearningSystem:
         session_metrics = user.get("session_metrics", {})
         avg_response_time = session_metrics.get("avg_response_time", 30) / 60  # Normalize to [0,1]
         interaction_depth = min(1.0, session_metrics.get("max_conversation_turns", 0) / 20)
+        topics_count = min(1.0, len(user.get("recent_topics", [])) / 10)
         
+        # Ensure exactly 11 dimensions for the state vector
         features = [
-            knowledge_level,
-            engagement,
-            performance,
-            topic_mastery,
-            feedback_ratio,
-            *learning_style_vec,  # Unpack learning style vector
-            avg_response_time,
-            interaction_depth
+            knowledge_level,       # 1
+            engagement,            # 2
+            performance,           # 3
+            topic_mastery,         # 4
+            feedback_ratio,        # 5
+            learning_style_vec[0], # 6
+            learning_style_vec[1], # 7
+            learning_style_vec[2], # 8
+            learning_style_vec[3], # 9
+            avg_response_time,     # 10
+            topics_count           # 11
         ]
         
         return torch.FloatTensor(features)
@@ -192,6 +262,7 @@ class LearningSystem:
 
     def _encode_learning_style(self, learning_style: Dict[str, float]) -> List[float]:
         """Encode learning style preferences"""
+        # Return exactly 4 values to maintain consistent tensor dimensions
         default_style = {
             "visual": 0.5,
             "interactive": 0.5,
@@ -199,7 +270,8 @@ class LearningSystem:
             "practical": 0.5
         }
         style = {**default_style, **learning_style}
-        return list(style.values())
+        return [style["visual"], style["interactive"], 
+                style["theoretical"], style["practical"]]
 
     async def process_feedback(self, user_id: str, message_id: str, feedback: str) -> Dict[str, Any]:
         """Process user feedback and update the learning system"""
@@ -329,8 +401,25 @@ class LearningSystem:
                          metrics: Dict[str, Any], 
                          new_topics: List[str]) -> Dict[str, Any]:
         """Update user state with new metrics and topics"""
-        # Create a copy to avoid modifying the original directly
         updated_state = user.copy()
+        
+        # Persist core user identity
+        identity = {
+            "name": user.get("name"),
+            "interests": user.get("interests", []),
+            "preferred_topics": user.get("preferred_topics", []),
+            "last_interactions": user.get("last_interactions", [])[-5:]
+        }
+        updated_state.update(identity)
+        
+        # Track interaction context
+        current_interaction = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "topics": new_topics,
+            "context": self._build_active_context(user)
+        }
+        updated_state.setdefault("last_interactions", []).append(current_interaction)
+        updated_state["last_interactions"] = updated_state["last_interactions"][-5:]  # Keep last 5
         
         # Update knowledge level - exponential moving average
         alpha = 0.3  # Weight for new observation
@@ -379,3 +468,127 @@ class LearningSystem:
                 updated_state["session_metrics"]["engagement_trend"][-10:]
         
         return updated_state
+
+    def _analyze_message_context(self, message: str, chat_history: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze the message for contextual cues to better personalize responses"""
+        context = {
+            "length": len(message),
+            "is_question": "?" in message,
+            "is_short_response": len(message.split()) <= 3,
+            "sentiment": "neutral",  # Default sentiment
+            "requires_context_switch": False
+        }
+        
+        # Check for very short negative responses that might indicate dissatisfaction
+        if context["is_short_response"]:
+            negative_responses = ["no", "wrong", "incorrect", "not right", "nope"]
+            if any(neg in message.lower() for neg in negative_responses):
+                context["sentiment"] = "negative"
+                context["requires_context_switch"] = True
+        
+        # Check conversation continuity
+        if chat_history and len(chat_history) >= 2:
+            last_bot_message = next((msg for msg in reversed(chat_history) 
+                                   if msg["role"] == "assistant"), None)
+            if last_bot_message:
+                # If user gives very short response after long bot message, might indicate disengagement
+                if len(last_bot_message.get("content", "")) > 200 and context["is_short_response"]:
+                    context["possible_disengagement"] = True
+        
+        return context
+
+    def _check_introduction(self, message: str) -> Optional[Dict[str, Any]]:
+        """Check for user introduction and extract information"""
+        intro_info = {}
+        
+        # Name patterns
+        name_match = re.search(r"(?i)(?:i am|my name is|i'm) (\w+)", message)
+        if name_match:
+            intro_info["name"] = name_match.group(1).capitalize()
+            
+        # Interest patterns
+        interests = []
+        interest_matches = re.finditer(r"(?i)i (?:like|love|enjoy) (\w+(?:\+\+)?)", message)
+        interests.extend(match.group(1).lower() for match in interest_matches)
+        
+        if interests:
+            intro_info["interests"] = list(set(interests))  # Deduplicate
+            
+        return intro_info if intro_info else None
+
+    def _is_introduction(self, message: str) -> bool:
+        """Check if message contains user introduction"""
+        patterns = [
+            r"(?i)i am \w+",
+            r"(?i)my name is \w+",
+            r"(?i)i(?:'m)? like \w+",
+            r"(?i)i(?:'m)? interested in \w+"
+        ]
+        return any(re.search(pattern, message) for pattern in patterns)
+
+    def _build_active_context(self, user: Dict[str, Any], current_message: str = "") -> Dict[str, Any]:
+        """Build rich context for current interaction"""
+        return {
+            "user_identity": {
+                "name": user.get("name"),
+                "interests": user.get("interests", []),
+                "known_topics": user.get("recent_topics", []),
+                "preferred_style": self._determine_preferred_style(user)
+            },
+            "learning_state": {
+                "knowledge_level": user.get("knowledge_level", 0.5),
+                "engagement": user.get("engagement", 0.5),
+                "mastered_topics": [t for t, v in user.get("topic_mastery", {}).items() if v > 0.8],
+                "struggling_topics": [t for t, v in user.get("topic_mastery", {}).items() if v < 0.3]
+            },
+            "interaction_history": {
+                "last_topics": user.get("recent_topics", [])[-3:],
+                "preferred_examples": [i.lower() for i in user.get("interests", [])]
+            }
+        }
+
+    def _determine_preferred_style(self, user: Dict[str, Any]) -> str:
+        """Determine user's preferred teaching style based on engagement history"""
+        history = user.get("learning_history", [])
+        if not history:
+            return "balanced"
+
+        # Analyze which strategies led to highest engagement
+        strategy_scores = {}
+        for entry in history[-10:]:  # Look at last 10 interactions
+            strategy = entry.get("strategy", {}).get("style", "balanced")
+            engagement = entry.get("engagement", 0.5)
+            strategy_scores[strategy] = strategy_scores.get(strategy, []) + [engagement]
+
+        # Get average engagement per strategy
+        avg_scores = {
+            k: sum(v)/len(v) for k, v in strategy_scores.items()
+        }
+
+        return max(avg_scores.items(), key=lambda x: x[1])[0] if avg_scores else "balanced"
+
+    def _detect_topic(self, message: str) -> Optional[str]:
+        """Enhanced topic detection"""
+        message = message.lower()
+        
+        # Check for context references
+        if any(ref in message for ref in ["you said", "earlier", "before", "previous"]):
+            return "context_reference"
+            
+        # Check for identity queries
+        if "who am i" in message or "what did i" in message:
+            return "user_identity"
+            
+        # Check for previous answer references
+        if any(ref in message for ref in ["the answer", "that answer", "your response"]):
+            return "previous_response"
+            
+        # Add specific topic detection
+        if "who am i" in message:
+            return "user_identity"
+        if any(op in message for op in ['+', '-', '*', '/', '=']):
+            return "mathematics"
+        for topic, keywords in self.topics_keywords.items():
+            if any(keyword in message for keyword in keywords):
+                return topic
+        return None

@@ -16,7 +16,7 @@ class MongoDB:
     def __init__(self, connection_string=None):
         """Initialize MongoDB connection"""
         conn_str = connection_string or os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
-        db_name = os.environ.get("MONGODB_DB", "mioo_tutor")
+        db_name = os.environ.get("MONGODB_DB", "mioo_db")  # Changed to match the log output
         
         try:
             self.client = motor.motor_asyncio.AsyncIOMotorClient(conn_str)
@@ -25,6 +25,7 @@ class MongoDB:
             self.sessions_collection = self.db["learning_sessions"]
             self.metrics_collection = self.db["learning_metrics"]
             self.feedback_collection = self.db["feedback"]
+            self.interactions_collection = self.db["interactions"]  # Renamed for clarity
             logger.info(f"Connected to MongoDB: {db_name}")
         except Exception as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
@@ -78,7 +79,7 @@ class MongoDB:
             return user
         except Exception as e:
             logger.error(f"Error retrieving user {user_id}: {e}")
-            return None
+            raise  # Change to raise the exception instead of returning None
     
     async def update_user(self, user_id: str, update_data: Dict[str, Any]) -> bool:
         """Update user data"""
@@ -86,6 +87,10 @@ class MongoDB:
             # Ensure we're not overwriting the user_id
             if 'user_id' in update_data:
                 del update_data['user_id']
+            
+            # Remove _id if it exists to prevent immutable field error
+            if '_id' in update_data:
+                del update_data['_id']
                 
             # Add last updated timestamp
             update_data['last_updated'] = datetime.utcnow().isoformat()
@@ -106,22 +111,56 @@ class MongoDB:
             return False
     
     async def add_message_to_history(self, user_id: str, message: Dict[str, Any]) -> bool:
-        """Add a message to user's chat history"""
+        """Add a message to user's chat history with improved handling"""
         try:
+            # Get existing chat history first
+            user = await self.users_collection.find_one({"user_id": user_id})
+            current_history = user.get("chat_history", []) if user else []
+            
+            # Add new message and ensure history stays at reasonable size (last 20 messages)
+            current_history.append(message)
+            if len(current_history) > 20:
+                current_history = current_history[-20:]
+                
+            # Update conversation metrics
+            update_data = {
+                "chat_history": current_history,
+                "last_message_timestamp": datetime.utcnow().isoformat(),
+                "total_messages": len(current_history)
+            }
+            
+            # If this is an assistant message, store it separately for quick lookup
+            if message["role"] == "assistant" and "message_id" in message:
+                update_data["last_assistant_message"] = {
+                    "message_id": message["message_id"],
+                    "content": message["content"],
+                    "timestamp": message["timestamp"]
+                }
+            
             result = await self.users_collection.update_one(
                 {"user_id": user_id},
-                {
-                    "$push": {"chat_history": message},
-                    "$inc": {"session_metrics.messages_count": 1},
-                    "$set": {"last_updated": datetime.utcnow().isoformat()}
-                }
+                {"$set": update_data}
             )
             
-            return result.matched_count > 0
+            return result.modified_count > 0
+            
         except Exception as e:
-            logger.error(f"Error adding message to history for user {user_id}: {e}")
+            logger.error(f"Error adding message to history: {e}")
             return False
-    
+
+    async def get_chat_history(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent chat history for a user"""
+        try:
+            user = await self.users_collection.find_one({"user_id": user_id})
+            if not user or "chat_history" not in user:
+                return []
+                
+            history = user["chat_history"]
+            return history[-limit:] if limit else history
+        except Exception as e:
+            logger.error(f"Error retrieving chat history: {e}")
+            return []
+
     async def store_learning_metrics(self, user_id: str, metrics: Dict[str, Any]) -> str:
         """Store learning metrics with timestamp"""
         try:
@@ -177,15 +216,33 @@ class MongoDB:
             
             await self.feedback_collection.insert_one(feedback_doc)
             
-            # Update the corresponding message in chat history with feedback
+            # Update feedback history
             await self.users_collection.update_one(
+                {"user_id": user_id},
+                {"$push": {"feedback_history": feedback}}
+            )
+            
+            # Try to update the corresponding message in chat history with feedback
+            # First try matching by message_id field
+            update_result = await self.users_collection.update_one(
                 {
                     "user_id": user_id, 
-                    "chat_history.timestamp": message_id
+                    "chat_history.message_id": message_id
                 },
                 {"$set": {"chat_history.$.feedback": feedback}}
             )
             
+            # If that doesn't match anything, try matching by timestamp
+            if update_result.modified_count == 0:
+                await self.users_collection.update_one(
+                    {
+                        "user_id": user_id, 
+                        "chat_history.timestamp": message_id
+                    },
+                    {"$set": {"chat_history.$.feedback": feedback}}
+                )
+            
+            logger.info(f"Stored feedback {feedback} for message {message_id} from user {user_id}")
             return True
         except Exception as e:
             logger.error(f"Error storing feedback for user {user_id}, message {message_id}: {e}")
@@ -233,3 +290,45 @@ class MongoDB:
         except Exception as e:
             logger.error(f"Error retrieving learning progress for user {user_id}: {e}")
             return None
+    
+    async def store_interaction(self, user_id: str, message_id: str, 
+                               action_idx: int, action_log_prob: float, 
+                               value: float, metrics: Dict[str, Any],
+                               user_state: Dict[str, Any]) -> str:
+        """Store interaction data for future feedback processing"""
+        # Clean the user state to remove MongoDB special fields
+        clean_user_state = await self._clean_document_for_update(user_state)
+        
+        interaction = {
+            "user_id": user_id,
+            "message_id": message_id,
+            "action_idx": action_idx,
+            "action_log_prob": action_log_prob,
+            "value": value,
+            "metrics": metrics,
+            "user_state": clean_user_state,
+            "timestamp": datetime.utcnow()
+        }
+        
+        # Use self.db instead of self.client to access the collection
+        result = await self.interactions_collection.insert_one(interaction)
+        return str(result.inserted_id)
+    
+    async def get_interaction(self, message_id: str) -> Dict[str, Any]:
+        """Get a specific interaction by message ID"""
+        # Use self.db instead of self.client to access the collection
+        interaction = await self.interactions_collection.find_one({"message_id": message_id})
+        return interaction
+    
+    async def _clean_document_for_update(self, doc: Dict[str, Any]) -> Dict[str, Any]:
+        """Remove MongoDB special fields that can't be modified"""
+        if not doc:
+            return {}
+            
+        clean_doc = doc.copy()
+        
+        # Remove fields that can't be modified
+        if '_id' in clean_doc:
+            del clean_doc['_id']
+            
+        return clean_doc

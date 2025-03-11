@@ -1,22 +1,22 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Message,
-  ChatRequest,
   ChatResponse,
   TeachingStrategy,
   UserState,
   LearningMetrics,
+  FeedbackRequest,
 } from "../types";
-import AdvancedMetrics from "./AdvancedMetrics";
+import Chat from "./Chat";
+import AdvancedMetricsWrapper from "./AdvancedMetricsWrapper";
 import TeachingStrategyDisplay from "./TeachingStrategyDisplay";
-import ChatMessage from "./ChatMessage";
 import DetailedMetricsPanel from "./DetailedMetricsPanel";
 import TopicKnowledgeGraph from "./TopicKnowledgeGraph";
 import { MetricsDisplay } from "./LearningMetrics";
-import AdvancedMetricsWrapper from "./AdvancedMetricsWrapper";
 import FollowUpSuggestions from "./FollowUpSuggestions";
+import ChatMessage from "./ChatMessage";
 
 interface ChatInterfaceProps {
   userId: string;
@@ -29,7 +29,6 @@ type MetricsTab = "overview" | "detailed" | "topics" | "strategy";
 
 export default function ChatInterface({ userId }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [currentStrategy, setCurrentStrategy] =
     useState<TeachingStrategy | null>(null);
@@ -52,36 +51,21 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
       engagement_trend: [],
     },
   });
-  const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
   const [detailedMetrics, setDetailedMetrics] = useState({
-    topicMastery: {},
-    learningSpeed: 0,
-    interactionQuality: 0,
-    contextUtilization: 0,
+    topicMastery: {} as Record<string, number>,
+    learningSpeed: 0.5,
+    interactionQuality: 0.5,
+    contextUtilization: 0.5,
   });
-
   const [learningHistory, setLearningHistory] = useState([]);
-  const [showAdvancedMetrics, setShowAdvancedMetrics] = useState(false);
   const [activeTab, setActiveTab] = useState<MetricsTab>("overview");
   const [feedbacks, setFeedbacks] = useState<{
     [key: string]: "like" | "dislike" | null;
   }>({});
-
-  // Add state for follow-up suggestions
   const [followUpSuggestions, setFollowUpSuggestions] = useState<{
     [messageId: string]: string[];
   }>({});
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
 
   // Fetch initial user state
   useEffect(() => {
@@ -109,16 +93,12 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
         }
 
         // Also fetch detailed metrics if available
-        try {
-          const metricsResponse = await fetch(
-            `${API_BASE_URL}/learning-progress/${userId}`
-          );
-          if (metricsResponse.ok) {
-            const metricsData = await metricsResponse.json();
-            setDetailedMetrics(metricsData);
-          }
-        } catch (error) {
-          console.warn("Could not fetch detailed metrics:", error);
+        const metricsResponse = await fetch(
+          `${API_BASE_URL}/learning-progress/${userId}`
+        );
+        if (metricsResponse.ok) {
+          const metricsData = await metricsResponse.json();
+          setDetailedMetrics(metricsData);
         }
       } catch (error) {
         console.error("Error fetching user data:", error);
@@ -134,7 +114,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     const firstSentence = response.split(".")[0];
     const words = firstSentence.split(" ");
 
-    // Try to extract a meaningful phrase (2-3 words)
+    // Try to extract a meaningful phrase
     for (let i = 0; i < words.length - 1; i++) {
       const word = words[i].toLowerCase();
       if (
@@ -157,23 +137,25 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     return "this topic";
   };
 
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || loading) return;
+  const handleSendMessage = async (content: string) => {
+    if (!content.trim() || loading) return;
 
     const userMessage: Message = {
       role: "user",
-      content: input.trim(),
+      content: content.trim(),
       timestamp: new Date().toISOString(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    setInput("");
     setLoading(true);
-    setThinking(true);
     setError(null);
 
     try {
+      // Store previous message to check for context changes
+      const prevMessages = messages;
+      const lastBotMessage = messages.length > 0 ? 
+        messages.filter(m => m.role === "assistant").pop() : null;
+
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
         headers: {
@@ -182,6 +164,10 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
         body: JSON.stringify({
           message: userMessage.content,
           user_id: userId,
+          context: {
+            isShortResponse: content.trim().split(/\s+/).length <= 3,
+            lastMessageTimestamp: lastBotMessage?.timestamp
+          }
         }),
       });
 
@@ -201,7 +187,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
 
       setMessages((prev) => [...prev, assistantMessage]);
 
-      // Generate follow-up suggestions for the last assistant message
+      // Generate follow-up suggestions
       const suggestedQuestions = [
         `Can you explain more about ${extractTopicFromResponse(
           data.response
@@ -222,18 +208,25 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
       if (stateResponse.ok) {
         const newState = await stateResponse.json();
         setUserState(newState);
-
-        // Update learning history if available
         if (newState.learning_history) {
           setLearningHistory(newState.learning_history);
         }
+      }
+
+      // If this is a short response like "no", scroll to make sure the response is visible
+      if (content.trim().split(/\s+/).length <= 3) {
+        setTimeout(() => {
+          const messagesContainer = document.querySelector(".overflow-y-auto");
+          if (messagesContainer) {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+          }
+        }, 100);
       }
     } catch (error) {
       console.error("Error:", error);
       setError("Failed to get response. Please try again.");
     } finally {
       setLoading(false);
-      setThinking(false);
     }
   };
 
@@ -242,26 +235,39 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     messageId: string
   ) => {
     try {
+      console.log(`Sending feedback: ${feedback} for message: ${messageId}`);
+      
+      const feedbackRequest: FeedbackRequest = {
+        user_id: userId,
+        message_id: messageId,
+        feedback: feedback,
+      };
+      
+      // Set feedback state immediately for better UX
+      setFeedbacks((prev) => ({ ...prev, [messageId]: feedback }));
+      
       const res = await fetch(`${API_BASE_URL}/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          message_id: messageId,
-          feedback: feedback,
-        }),
+        body: JSON.stringify(feedbackRequest),
       });
 
       if (res.ok) {
-        setFeedbacks((prev) => ({ ...prev, [messageId]: feedback }));
+        // Update user state to reflect feedback
+        const stateResponse = await fetch(`${API_BASE_URL}/user/${userId}`);
+        if (stateResponse.ok) {
+          const newState = await stateResponse.json();
+          setUserState(newState);
+        }
+      } else {
+        // If server returns error, revert the feedback
+        setFeedbacks((prev) => ({ ...prev, [messageId]: null }));
+        throw new Error(`Failed to send feedback: ${res.statusText}`);
       }
     } catch (error) {
       console.error("Feedback error:", error);
+      setError("Failed to send feedback. Please try again.");
     }
-  };
-
-  const handleSuggestionClick = (suggestion: string) => {
-    setInput(suggestion);
   };
 
   const renderMetricsContent = () => {
@@ -289,134 +295,151 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     }
   };
 
+  // Show follow-up suggestions after the last assistant message
+  const lastAssistantMessage = messages
+    .slice()
+    .reverse()
+    .find((msg) => msg.role === "assistant");
+
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 min-h-[600px] h-[calc(100vh-12rem)]">
+    <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-4 h-full">
       {/* Main Chat Section */}
-      <div className="xl:col-span-8 flex flex-col bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-        {/* Chat Header */}
-        <div className="px-6 py-4 bg-white border-b border-gray-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
-              <h2 className="text-lg font-semibold text-gray-800">
-                Interactive Learning Session
-              </h2>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-500">
-                {messages.length} messages
-              </span>
+      <div className="lg:col-span-2 xl:col-span-3 h-full flex flex-col">
+        <div className="flex flex-col h-full bg-white rounded-xl shadow-lg overflow-hidden border border-gray-200">
+          {/* Chat Header */}
+          <div className="px-6 py-3 bg-white border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <h3 className="text-base font-medium text-gray-700">Learning Conversation</h3>
+              </div>
+              <div className="text-sm text-gray-500">
+                {userState.recent_topics.length > 0 && (
+                  <span>Topics: {userState.recent_topics.slice(0, 3).join(", ")}</span>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-
-        {/* Messages Area */}
-        <div className="flex-1 px-6 py-4 overflow-y-auto bg-gray-50 scrollbar-thin">
-          {error && (
-            <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-4 border border-red-100 animate-fade-in">
-              {error}
-            </div>
-          )}
-
-          {messages.length === 0 && !error && (
-            <div className="flex flex-col items-center justify-center h-full text-center p-6">
-              <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="text-indigo-500"
-                >
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                </svg>
+          
+          {/* Messages Container - Fix scrolling issue */}
+          <div className="flex-1 p-4 space-y-6 overflow-y-auto bg-gray-50 scrollbar-thin min-h-[300px] max-h-[calc(100vh-300px)]">
+            {/* ...existing code for empty state... */}
+            
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-center p-6">
+                <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-indigo-500"
+                  >
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                </div>
+                <h3 className="text-lg font-medium text-gray-800 mb-2">Start a conversation</h3>
+                <p className="text-gray-500 max-w-sm text-base">
+                  Ask any question and I'll adapt to your learning style.
+                </p>
               </div>
-              <h3 className="text-lg font-medium text-gray-800 mb-2">
-                Start a new conversation
-              </h3>
-              <p className="text-gray-500 max-w-sm">
-                Ask any question and I'll help you learn. I adapt to your
-                learning style and interests.
-              </p>
-            </div>
-          )}
-
-          <div className="space-y-6">
-            {messages.map((msg, idx) => (
-              <div key={idx} className="space-y-2">
-                <ChatMessage
-                  message={msg}
-                  sendFeedback={sendFeedback}
-                  feedback={feedbacks[msg.timestamp]}
-                />
-
-                {/* Add follow-up suggestions after assistant messages */}
-                {msg.role === "assistant" &&
-                  followUpSuggestions[msg.timestamp] && (
-                    <div className="ml-4">
-                      <FollowUpSuggestions
-                        suggestions={followUpSuggestions[msg.timestamp]}
-                        onSuggestionClick={handleSuggestionClick}
-                      />
-                    </div>
-                  )}
+            ) : (
+              <div className="space-y-6">
+                {messages.map((msg, idx) => (
+                  <ChatMessage
+                    key={idx}
+                    message={msg}
+                    sendFeedback={msg.role === "assistant" ? sendFeedback : undefined}
+                    feedback={feedbacks[msg.timestamp]}
+                  />
+                ))}
               </div>
-            ))}
-            {thinking && (
-              <div className="flex items-center space-x-2 p-4 bg-gray-50 rounded-lg w-fit animate-pulse">
-                <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce" />
-                <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce delay-100" />
-                <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce delay-200" />
+            )}
+            
+            {loading && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 text-gray-800 rounded-lg rounded-bl-none p-3">
+                  <div className="flex space-x-2">
+                    <div className="w-3 h-3 bg-gray-400 rounded-full animate-bounce"></div>
+                    <div className="w-3 h-3 bg-gray-400 rounded-full animate-bounce" 
+                         style={{ animationDelay: '0.2s' }}></div>
+                    <div className="w-3 h-3 bg-gray-400 rounded-full animate-bounce" 
+                         style={{ animationDelay: '0.4s' }}></div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
-          <div ref={messagesEndRef} />
-        </div>
 
-        {/* Enhanced Input Area */}
-        <div className="px-6 py-4 bg-white border-t border-gray-200">
-          <form onSubmit={sendMessage} className="flex gap-3">
-            <div className="relative flex-1">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
+          {/* Input Form - Fixed Enter key issue with onKeyDown */}
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const formData = new FormData(e.currentTarget);
+            const message = formData.get('message')?.toString() || '';
+            if (message.trim() && !loading) {
+              handleSendMessage(message);
+              e.currentTarget.value = '';
+              (document.querySelector('textarea[name="message"]') as HTMLTextAreaElement).value = '';
+            }
+          }} className="px-4 py-3 bg-white border-t border-gray-200">
+            <div className="flex items-end space-x-2">
+              <div className="flex-1 relative">
+                <textarea
+                  name="message"
+                  placeholder="Type your message..."
+                  className="w-full resize-none rounded-lg border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 p-3 pr-10 text-base"
+                  rows={2}
+                  style={{ minHeight: '60px', maxHeight: '120px' }}
+                  disabled={loading}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      const message = e.currentTarget.value;
+                      if (message.trim() && !loading) {
+                        handleSendMessage(message);
+                        e.currentTarget.value = '';
+                      }
+                    }
+                  }}
+                ></textarea>
+                {loading && (
+                  <div className="absolute right-3 bottom-3">
+                    <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                  </div>
+                )}
+              </div>
+              <button
+                type="submit"
                 disabled={loading}
-                placeholder="Ask your question..."
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent text-gray-800 placeholder-gray-400 transition-all duration-200"
-              />
-              {loading && (
-                <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                  <div className="w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full animate-spin"></div>
-                </div>
-              )}
+                className="px-5 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex-shrink-0 font-medium text-base"
+              >
+                Send
+              </button>
             </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className={`px-6 py-3 rounded-lg font-medium text-sm transition-all duration-200 flex items-center gap-2 min-w-[100px] justify-center
-                ${
-                  loading
-                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                    : "bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-700 hover:to-indigo-700 hover:shadow-md active:scale-95"
-                }`}
-            >
-              {loading ? "Processing..." : "Send"}
-            </button>
           </form>
         </div>
+        
+        {/* Follow-up suggestions */}
+        {lastAssistantMessage && followUpSuggestions[lastAssistantMessage.timestamp] && !loading && (
+          <div className="mt-3">
+            <FollowUpSuggestions
+              suggestions={followUpSuggestions[lastAssistantMessage.timestamp]}
+              onSuggestionClick={(suggestion) => handleSendMessage(suggestion)}
+            />
+          </div>
+        )}
       </div>
 
-      {/* Right Sidebar - Analytics */}
-      <div className="xl:col-span-4 flex flex-col gap-4 h-full overflow-y-auto">
-        {/* Enhanced Tabs */}
-        <div className="bg-white rounded-lg p-2 shadow-md border border-gray-200">
-          <div className="flex gap-1">
+      {/* Metrics Section */}
+      <div className="lg:col-span-1 h-full flex flex-col gap-3">
+        {/* Metrics Tabs */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="grid grid-cols-4 gap-1 p-1">
             {[
               { id: "overview", label: "Overview", icon: "📊" },
               { id: "detailed", label: "Analysis", icon: "📈" },
@@ -426,14 +449,13 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as MetricsTab)}
-                className={`flex-1 px-3 py-2 rounded-md text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1.5
-                  ${
-                    activeTab === tab.id
-                      ? "bg-violet-600 text-white shadow-sm"
-                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                  }`}
+                className={`py-2 px-1 rounded text-xs font-medium transition-all flex flex-col items-center justify-center ${
+                  activeTab === tab.id
+                    ? "bg-indigo-600 text-white"
+                    : "text-gray-600 hover:bg-gray-50"
+                }`}
               >
-                <span>{tab.icon}</span>
+                <span className="text-base mb-1">{tab.icon}</span>
                 <span>{tab.label}</span>
               </button>
             ))}
@@ -441,26 +463,37 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
         </div>
 
         {/* Metrics Content */}
-        <div className="flex-1 bg-white rounded-lg shadow-md border border-gray-200 p-4 overflow-y-auto scrollbar-thin">
-          {renderMetricsContent()}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 flex-1 overflow-y-auto scrollbar-thin">
+          {error ? (
+            <div className="text-red-500 text-sm p-3 bg-red-50 rounded-md">
+              {error}
+            </div>
+          ) : (
+            renderMetricsContent()
+          )}
         </div>
 
-        {/* User State Summary */}
-        <div className="bg-white rounded-lg shadow-md border border-gray-200 p-4">
-          <div className="flex justify-between items-center mb-3">
-            <h3 className="text-sm font-medium text-gray-700">
-              Learning Status
-            </h3>
+        {/* Learning Status Summary */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3">
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="text-xs font-medium text-gray-700">Learning Progress</h3>
             <span className="text-xs text-indigo-600 font-medium bg-indigo-50 px-2 py-0.5 rounded-full">
-              Session #{userState.session_metrics.messages_count}
+              {userState.session_metrics.topics_covered.length} topics
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-gray-50 rounded-md p-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-gray-50 rounded p-2">
               <div className="text-xs text-gray-500">Knowledge</div>
-              <div className="text-sm font-medium">
-                {(userState.knowledge_level * 100).toFixed(0)}%
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">
+                  {(userState.knowledge_level * 100).toFixed(0)}%
+                </div>
+                {metrics?.knowledge_gain && metrics.knowledge_gain > 0 && (
+                  <span className="text-xs text-green-600 bg-green-50 px-1 py-0.5 rounded">
+                    +{(metrics.knowledge_gain * 100).toFixed(0)}%
+                  </span>
+                )}
               </div>
               <div className="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                 <div
@@ -470,7 +503,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
               </div>
             </div>
 
-            <div className="bg-gray-50 rounded-md p-2">
+            <div className="bg-gray-50 rounded p-2">
               <div className="text-xs text-gray-500">Engagement</div>
               <div className="text-sm font-medium">
                 {(userState.engagement * 100).toFixed(0)}%
@@ -484,17 +517,6 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
             </div>
           </div>
         </div>
-
-        {/* Advanced Metrics Integration */}
-        {userState && (
-          <AdvancedMetricsWrapper
-            userState={userState}
-            currentStrategy={currentStrategy}
-            learningHistory={learningHistory}
-            currentMetrics={metrics}
-            detailedMetrics={detailedMetrics}
-          />
-        )}
       </div>
     </div>
   );
