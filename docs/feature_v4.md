@@ -564,3 +564,57 @@ flowchart TD
     T --> M[Model Update]
     M --> A[Adapt Policy]
 ```
+
+## UI Indicators
+
+### Progress Timeline Elements
+
+The learning progress timeline uses different line styles and colors to represent various aspects of the learning journey:
+
+```
+timeline_indicators = {
+    "knowledge": {
+        "color": "bg-green-500",
+        "description": "Shows overall knowledge gain",
+        "range": "0-100%",
+        "interpretation": {
+            "0-30%": "Beginning stage",
+            "31-70%": "Building understanding",
+            "71-100%": "Strong grasp"
+        }
+    },
+    "engagement": {
+        "color": "bg-blue-500",
+        "description": "Tracks user interaction and interest level",
+        "range": "0-100%",
+        "interpretation": {
+            "0-30%": "Low engagement",
+            "31-70%": "Moderate engagement",
+            "71-100%": "High engagement"
+        }
+    }
+}
+```
+
+#### Line Indicators:
+1. **Green Line (Knowledge)**
+   - Represents cumulative knowledge gain
+   - Solid line indicates verified understanding
+   - Increases with successful interactions and correct responses
+
+2. **Blue Line (Engagement)**
+   - Shows user engagement level
+   - Updates based on interaction frequency and quality
+   - Reflects participation and response patterns
+
+#### Progress Markers:
+- **Dots**: Individual learning interactions
+- **Up Arrows**: Significant knowledge gains
+- **Stars**: Achievement of learning milestones
+- **Percentage Labels**: Numerical progress indicators
+
+#### Status Colors:
+- **Green**: Good progress
+- **Yellow**: Needs attention
+- **Red**: Requires intervention
+- **Gray**: Inactive or not started

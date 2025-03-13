@@ -30,6 +30,7 @@ type MetricsTab = "overview" | "detailed" | "topics" | "strategy";
 export default function ChatInterface({ userId }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [currentStrategy, setCurrentStrategy] =
     useState<TeachingStrategy | null>(null);
   const [metrics, setMetrics] = useState<LearningMetrics | null>(null);
@@ -109,39 +110,47 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     fetchUserState();
   }, [userId]);
 
-  // Add initial greeting effect
+  // Optimize initial greeting
   useEffect(() => {
     const initializeChat = async () => {
-      try {
-        // Fetch initial state first
-        const response = await fetch(`${API_BASE_URL}/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message: "__init__",  // Special token for initialization
-            user_id: userId,
-            is_initial: true
-          })
-        });
+      if (messages.length === 0) {
+        // Start with minimal greeting
+        const initialMessage: Message = {
+          role: "assistant",
+          content: "Hi! I'm your AI tutor.",
+          timestamp: new Date().toISOString()
+        };
+        setMessages([initialMessage]);
+        
+        // Fetch full personalized greeting in background
+        try {
+          const response = await fetch(`${API_BASE_URL}/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: "__init__",
+              user_id: userId,
+              is_initial: true
+            })
+          });
 
-        if (response.ok) {
-          const data = await response.json();
-          const greeting: Message = {
-            role: "assistant",
-            content: data.response,
-            timestamp: new Date().toISOString()
-          };
-          setMessages([greeting]);
+          if (response.ok) {
+            const data = await response.json();
+            // Replace initial greeting with personalized one
+            setMessages([{
+              role: "assistant",
+              content: data.response,
+              timestamp: new Date().toISOString()
+            }]);
+          }
+        } catch (error) {
+          console.error("Error fetching full greeting:", error);
         }
-      } catch (error) {
-        console.error("Error initializing chat:", error);
       }
     };
 
-    if (messages.length === 0) {
-      initializeChat();
-    }
-  }, [userId]);
+    initializeChat();
+  }, [userId, messages.length]);
 
   // Helper function to extract a topic from the response
   const extractTopicFromResponse = (response: string): string => {
@@ -183,6 +192,12 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     setMessages((prev) => [...prev, userMessage]);
     setLoading(true);
     setError(null);
+
+    // Clear input and disable it
+    if (inputRef.current) {
+      inputRef.current.value = '';
+      inputRef.current.disabled = true;
+    }
 
     try {
       // Store previous message to check for context changes
@@ -261,6 +276,10 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
       setError("Failed to get response. Please try again.");
     } finally {
       setLoading(false);
+      // Re-enable input
+      if (inputRef.current) {
+        inputRef.current.disabled = false;
+      }
     }
   };
 
@@ -334,6 +353,27 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     .slice()
     .reverse()
     .find((msg) => msg.role === "assistant");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget as HTMLFormElement);
+    const message = formData.get('message')?.toString() || '';
+    
+    if (message.trim() && !loading) {
+      // Disable input immediately
+      if (inputRef.current) {
+        inputRef.current.disabled = true;
+      }
+      
+      await handleSendMessage(message);
+      
+      // Clear the input
+      if (inputRef.current) {
+        inputRef.current.value = '';
+        inputRef.current.disabled = false;
+      }
+    }
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-4 h-full">
@@ -411,19 +451,11 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
           </div>
 
           {/* Input Form - Fixed Enter key issue with onKeyDown */}
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const formData = new FormData(e.currentTarget);
-            const message = formData.get('message')?.toString() || '';
-            if (message.trim() && !loading) {
-              handleSendMessage(message);
-              e.currentTarget.value = '';
-              (document.querySelector('textarea[name="message"]') as HTMLTextAreaElement).value = '';
-            }
-          }} className="px-4 py-3 bg-white border-t border-gray-200">
+          <form onSubmit={handleSubmit} className="px-4 py-3 bg-white border-t border-gray-200">
             <div className="flex items-end space-x-2">
               <div className="flex-1 relative">
                 <textarea
+                  ref={inputRef}
                   name="message"
                   placeholder="Type your message..."
                   className="w-full resize-none rounded-lg border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 p-3 pr-10 text-base"

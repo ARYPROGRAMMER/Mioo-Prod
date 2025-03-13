@@ -105,10 +105,36 @@ class LearningSystem:
             
             logger.info(f"Selected teaching strategy for user {user_id}: {teaching_strategy['style']} (complexity: {teaching_strategy['complexity']})")
             
+            # Enhanced context building
+            user_context = {
+                "name": user.get("name", "there"),
+                "interests": user.get("interests", []),
+                "knowledge_level": user.get("knowledge_level", 0.5),
+                "recent_topics": user.get("recent_topics", []),
+                "is_math_question": any(op in message for op in ['+', '-', '*', '/', '=']),
+                "is_identity_query": "who am i" in message.lower()
+            }
+
+            # Special handling for identity queries
+            if user_context["is_identity_query"]:
+                interests = user_context["interests"]
+                response = f"You're {user_context['name']}"
+                if interests:
+                    response += f", and you're interested in {', '.join(interests)}"
+                response += f". Your current knowledge level is {self._describe_level(user_context['knowledge_level'])}."
+                if user_context["recent_topics"]:
+                    response += f" We've recently discussed {', '.join(user_context['recent_topics'])}."
+                
+                return {
+                    "response": response,
+                    "teaching_strategy": teaching_strategy,
+                    "metrics": metrics
+                }
+
             # 3. Generate response using LLM with the selected strategy and FULL chat history
             llm_response = await self.llm.generate_response(
                 message=message,
-                user_state=user,  # Pass complete user state for personalization
+                user_state=user_context,  # Pass complete user state for personalization
                 teaching_strategy=teaching_strategy,
                 chat_history=user.get("chat_history", [])  # Pass all available chat history for context
             )
@@ -592,3 +618,9 @@ class LearningSystem:
             if any(keyword in message for keyword in keywords):
                 return topic
         return None
+
+    def _describe_level(self, level: float) -> str:
+        if level < 0.3: return "at a beginner level"
+        if level < 0.6: return "at an intermediate level"
+        if level < 0.8: return "at an advanced level"
+        return "at an expert level"

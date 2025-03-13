@@ -119,20 +119,29 @@ class MultiModelOrchestrator:
         return "\n".join(context_parts)
 
     def _generate_initial_greeting(self, user_state: Dict[str, Any]) -> str:
-        """Generate personalized initial greeting"""
+        """Generate quick initial greeting"""
         name = user_state.get('name', 'there')
+        return f"Hello {name}! I'm your AI tutor. How can I help you today?"
+
+    def _personalize_response(self, response: str, user_state: Dict[str, Any], message: str) -> str:
+        """Add personalized examples based on user interests"""
         interests = user_state.get('interests', [])
-        
-        greeting = [f"Hello {name}! I'm your AI tutor."]
-        
-        if interests:
-            greeting.append(f"I see you're interested in {', '.join(interests)}.")
+        name = user_state.get('name', 'there')
+
+        # Check if response is for a math/programming question
+        if any(op in message for op in ['+', '-', '*', '/', '=']):
             if 'c++' in [i.lower() for i in interests]:
-                greeting.append("I'll make sure to use C++ examples when relevant.")
-                
-        greeting.append("Feel free to ask me anything - I'll adapt my teaching style to help you learn effectively.")
-        
-        return " ".join(greeting)
+                cpp_example = f"\n\nHere's how you could represent this in C++:\n```cpp\n#include <iostream>\n\nint main() {{\n    // Calculate {message}\n    std::cout << {message} << std::endl;\n    return 0;\n}}\n```"
+                response += cpp_example
+
+        # Add personalized addressing
+        response = f"{response}\n\n{name}, "
+        if interests:
+            related_interests = [i for i in interests if i.lower() in message.lower()]
+            if related_interests:
+                response += f"since you're interested in {', '.join(related_interests)}, "
+
+        return response
 
     async def generate_response(self, 
                               message: str, 
@@ -272,6 +281,8 @@ Your goal is to help this specific user learn effectively based on their individ
             
             # Extract response content
             content = response.choices[0].message.content
+            # Add personalization
+            content = self._personalize_response(content, user_state, message)
             input_tokens = response.usage.prompt_tokens
             output_tokens = response.usage.completion_tokens
             
