@@ -102,6 +102,8 @@ class PPOAgent:
         self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=LEARNING_RATE)
         self.value_optimizer = optim.Adam(self.value_net.parameters(), lr=LEARNING_RATE)
         self.memory = PPOMemory(BATCH_SIZE)
+        self.learning_rate = LEARNING_RATE
+        self.last_mean_reward = 0.0
         
         # Load pre-trained models if path is provided
         if load_path:
@@ -136,37 +138,56 @@ class PPOAgent:
                       exploration_score, 
                       emotional_improvement,
                       user_feedback=None,
-                      user_state=None):
-        """Enhanced reward calculation with user preferences"""
-        # Base reward calculation
-        base_reward = (
-            3.0 * knowledge_gain +
-            2.0 * engagement_delta +
-            1.0 * response_quality +
-            0.5 * exploration_score +
-            1.5 * emotional_improvement
-        )
-        
-        # User preference multiplier
-        preference_multiplier = 1.0
+                      user_state=None,
+                      context_match=0.0):
+        """Enhanced reward calculation with better personalization metrics"""
+        # Base reward components
+        knowledge_component = 3.0 * knowledge_gain
+        engagement_component = 2.0 * engagement_delta
+        quality_component = 1.0 * response_quality
+        exploration_component = 0.5 * exploration_score
+        emotional_component = 1.5 * emotional_improvement
+        context_component = 2.0 * context_match  # New component for context relevance
+
+        # Calculate personalization bonus
+        personalization_bonus = 0.0
         if user_state and user_state.get("interests"):
-            # Check if response matched user interests
-            interest_alignment = any(
+            interest_match = any(
                 interest.lower() in user_state.get("last_response", "").lower() 
                 for interest in user_state.get("interests", [])
             )
-            if interest_alignment:
-                preference_multiplier *= 1.2
-        
-        # Explicit feedback multiplier
+            if interest_match:
+                personalization_bonus = 1.0
+
+        # Calculate context retention bonus
+        context_bonus = 0.0
+        if user_state and user_state.get("chat_history", []):
+            recent_topics = [msg.get("topics", []) for msg in user_state["chat_history"][-3:]]
+            if any(topic in user_state.get("current_topics", []) for topic_list in recent_topics for topic in topic_list):
+                context_bonus = 0.5
+
+        # Base reward calculation
+        base_reward = (
+            knowledge_component +
+            engagement_component +
+            quality_component +
+            exploration_component +
+            emotional_component +
+            context_component
+        )
+
+        # Apply bonuses and multipliers
+        reward = base_reward * (1.0 + personalization_bonus + context_bonus)
+
+        # Apply feedback multiplier if available
         if user_feedback:
             feedback_multiplier = 1.2 if user_feedback == "like" else 0.8
-            return base_reward * preference_multiplier * feedback_multiplier
-        
-        return base_reward * preference_multiplier
+            reward *= feedback_multiplier
 
+        return reward
+    
     async def train(self):
-        """Enhanced PPO training with feedback integration"""
+        """Enhanced PPO training with improved stability"""
         if len(self.memory) < self.memory.batch_size:
             return None
             
@@ -193,6 +214,18 @@ class PPOAgent:
             value_loss.backward()
             self.value_optimizer.step()
         
+        # Add gradient clipping and learning rate decay
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), MAX_GRAD_NORM)
+        torch.nn.utils.clip_grad_norm_(self.value_net.parameters(), MAX_GRAD_NORM)
+
+        # Decay learning rate based on performance
+        if rewards.mean() < self.last_mean_reward:
+            self.learning_rate *= 0.95
+            for param_group in self.policy_optimizer.param_groups:
+                param_group['lr'] = self.learning_rate
+
+        self.last_mean_reward = rewards.mean()
+
         self.memory.clear()
         
         return {

@@ -109,6 +109,40 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     fetchUserState();
   }, [userId]);
 
+  // Add initial greeting effect
+  useEffect(() => {
+    const initializeChat = async () => {
+      try {
+        // Fetch initial state first
+        const response = await fetch(`${API_BASE_URL}/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: "__init__",  // Special token for initialization
+            user_id: userId,
+            is_initial: true
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const greeting: Message = {
+            role: "assistant",
+            content: data.response,
+            timestamp: new Date().toISOString()
+          };
+          setMessages([greeting]);
+        }
+      } catch (error) {
+        console.error("Error initializing chat:", error);
+      }
+    };
+
+    if (messages.length === 0) {
+      initializeChat();
+    }
+  }, [userId]);
+
   // Helper function to extract a topic from the response
   const extractTopicFromResponse = (response: string): string => {
     const firstSentence = response.split(".")[0];

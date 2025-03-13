@@ -80,32 +80,59 @@ class MultiModelOrchestrator:
         return "balanced"
     
     def _build_conversation_context(self, chat_history: List[Dict[str, str]], user_state: Dict[str, Any]) -> str:
-        """Build detailed conversation context from history"""
+        """Build richer conversation context"""
         if not chat_history:
-            return "No previous context available."
+            name = user_state.get('name', 'there')
+            interests = user_state.get('interests', [])
+            return f"""Starting a new conversation. 
+                   {'I see youre interested in ' + ', '.join(interests) + '.' if interests else ''}
+                   How can I help you today?"""
             
         context_parts = []
+        topics_discussed = set()
         
-        # Get last query and response
-        last_exchange = chat_history[-2:] if len(chat_history) >= 2 else chat_history
-        
-        # Track conversation thread
-        current_topic = None
-        for msg in last_exchange:
+        # Track the conversation flow
+        last_n_messages = chat_history[-5:]  # Last 5 messages
+        for msg in last_n_messages:
             if msg["role"] == "user":
                 current_topic = self._detect_current_focus(msg["content"], user_state)
-            context_parts.append(f"{msg['role'].capitalize()}: {msg['content'][:100]}...")
-            
-        # Add user's interests if relevant to current topic
-        if current_topic and user_state.get("interests"):
-            relevant_interests = [
-                interest for interest in user_state["interests"]
-                if interest.lower() in current_topic.lower()
-            ]
-            if relevant_interests:
-                context_parts.append(f"Relevant interests: {', '.join(relevant_interests)}")
-                
+                if current_topic != "general":
+                    topics_discussed.add(current_topic)
+
+        # Add topic awareness
+        if topics_discussed:
+            context_parts.append(f"We've been discussing: {', '.join(topics_discussed)}")
+
+        # Add learning progress context
+        if "topic_mastery" in user_state:
+            current_topic_mastery = user_state["topic_mastery"].get(list(topics_discussed)[-1], 0) if topics_discussed else 0
+            if current_topic_mastery > 0.7:
+                context_parts.append("You're showing good understanding of this topic.")
+            elif current_topic_mastery < 0.3:
+                context_parts.append("Let's keep building your understanding of this topic.")
+
+        # Add continuity markers
+        last_assistant_msg = next((msg["content"] for msg in reversed(chat_history) if msg["role"] == "assistant"), None)
+        if last_assistant_msg:
+            context_parts.append(f"Last explained: {last_assistant_msg[:100]}...")
+
         return "\n".join(context_parts)
+
+    def _generate_initial_greeting(self, user_state: Dict[str, Any]) -> str:
+        """Generate personalized initial greeting"""
+        name = user_state.get('name', 'there')
+        interests = user_state.get('interests', [])
+        
+        greeting = [f"Hello {name}! I'm your AI tutor."]
+        
+        if interests:
+            greeting.append(f"I see you're interested in {', '.join(interests)}.")
+            if 'c++' in [i.lower() for i in interests]:
+                greeting.append("I'll make sure to use C++ examples when relevant.")
+                
+        greeting.append("Feel free to ask me anything - I'll adapt my teaching style to help you learn effectively.")
+        
+        return " ".join(greeting)
 
     async def generate_response(self, 
                               message: str, 
