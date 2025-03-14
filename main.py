@@ -3,8 +3,6 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from config import settings
-
-from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -26,6 +24,13 @@ from memory_manager import MemoryManager
 import re
 import copy
 from user_management import router as user_router
+from assistants_manager import AssistantsManager
+from assistants_feedback import AssistantsFeedbackCollector
+import asyncio
+import nest_asyncio
+
+# Enable nested event loops (needed for Jupyter/interactive environments)
+nest_asyncio.apply()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,72 +53,262 @@ app.add_middleware(
 
 # MongoDB setup
 MONGO_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-client = AsyncIOMotorClient(MONGO_URL)
-db = client.ai_tutor_db
-# Collections
-users_collection = db.users
-chat_history_collection = db.chat_history
-user_states_collection = db.user_states
+client = None
+db = None
+
+# Initialize collections
+users_collection = None
+chat_history_collection = None
+user_states_collection = None
+
+async def init_mongodb():
+    """Initialize MongoDB connection and collections"""
+    global client, db, users_collection, chat_history_collection, user_states_collection
+    try:
+        # Create client with explicit event loop
+        client = AsyncIOMotorClient(MONGO_URL, io_loop=asyncio.get_event_loop())
+        db = client.ai_tutor_db
+        
+        # Initialize collections
+        users_collection = db.users
+        chat_history_collection = db.chat_history
+        user_states_collection = db.user_states
+        
+        # Test connection
+        await db.command('ping')
+        logger.info("MongoDB connection established")
+    except Exception as e:
+        logger.error(f"Failed to connect to MongoDB: {str(e)}")
+        raise
 
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+assistants_manager = AssistantsManager(api_key=os.getenv("OPENAI_API_KEY"))
 
-def serialize_datetime(dt):
-    """Convert datetime to ISO format string"""
-    if isinstance(dt, str):
-        return dt
-    return dt.isoformat() if dt else None
+# Move all class definitions here
+class StateEncoder:
+    def __init__(self, state_dim=10):
+        self.state_dim = state_dim
+    def encode_state(self, user_state: Dict) -> torch.Tensor:
+        # Knowledge components (3 dimensions)
+        knowledge_level = float(user_state.get('knowledge_level', 0.5))
+        recent_performance = float(user_state.get('performance', 0.5))
+        topic_mastery = len(user_state.get('recent_topics', [])) / 10.0
+        
+        # Engagement components (3 dimensions)
+        current_engagement = float(user_state.get('engagement', 0.5))
+        interaction_frequency = min(1.0, len(user_state.get('chat_history', [])) / 50.0)
+        interest_diversity = len(user_state.get('interests', [])) / 10.0
+        
+        # Learning style components (4 dimensions)
+        avg_response_length = min(1.0, sum(len(msg.get('content', '')) for msg in user_state.get('chat_history', [])[-5:]) / 2500)
+        preferred_complexity = self._calculate_preferred_complexity(user_state)
+        learning_speed = self._calculate_learning_speed(user_state)
+        interaction_style = self._calculate_interaction_style(user_state)
+        
+        return torch.tensor([
+            knowledge_level,
+            recent_performance,
+            topic_mastery,
+            current_engagement,
+            interaction_frequency,
+            interest_diversity,
+            avg_response_length,
+            preferred_complexity,
+            learning_speed,
+            interaction_style
+        ], dtype=torch.float32)
+    def _calculate_preferred_complexity(self, user_state: Dict) -> float:
+        chat_history = user_state.get('chat_history', [])
+        if not chat_history:
+            return 0.5
+        # Analyze last 5 successful interactions
+        complexity_scores = []
+        for msg in chat_history[-10:]:
+            if msg.get('role') == 'assistant':
+                content = msg.get('content', '')
+                # Estimate complexity based on sentence length and vocabulary
+                words = content.split()
+                avg_word_length = sum(len(word) for word in words) / len(words) if words else 0
+                complexity = min(1.0, (avg_word_length - 3) / 5)
+                complexity_scores.append(complexity)
+        return sum(complexity_scores) / len(complexity_scores) if complexity_scores else 0.5
+    def _calculate_learning_speed(self, user_state: Dict) -> float:
+        knowledge_history = user_state.get('knowledge_history', [])
+        if len(knowledge_history) < 2:
+            return 0.5
+        # Calculate average knowledge gain per interaction
+        gains = [k2 - k1 for k1, k2 in zip(knowledge_history[:-1], knowledge_history[1:])]
+        avg_gain = sum(gains) / len(gains)
+        return min(1.0, max(0.0, avg_gain * 5))  # Normalize to [0,1]
+    def _calculate_interaction_style(self, user_state: Dict) -> float:
+        chat_history = user_state.get('chat_history', [])
+        if not chat_history:
+            return 0.5
+        # Analyze user messages for interaction style
+        user_messages = [msg for msg in chat_history if msg.get('role') == 'user']
+        if not user_messages:
+            return 0.5
+        # Calculate ratio of questions to statements
+        question_count = sum(1 for msg in user_messages if '?' in msg.get('content', ''))
+        return question_count / len(user_messages)
 
-def parse_datetime(dt_str):
-    """Parse ISO format string to datetime"""
-    if isinstance(dt_str, datetime):
-        return dt_str
-    return datetime.fromisoformat(dt_str) if dt_str else None
+class RewardCalculator:
+    def __init__(self):
+        self.engagement_history = []
+        self.knowledge_history = []
+        self.reward_scale = 1.0
+        self.emotional_impact_history = []
+    def calculate_reward(
+        self,
+        old_state: Dict[str, float],
+        new_state: Dict[str, float],
+        interaction_metrics: Dict[str, float]
+    ) -> float:
+        # Track histories
+        self.engagement_history.append(new_state['engagement'])
+        self.knowledge_history.append(new_state['knowledge_level'])
+        
+        # Base rewards
+        knowledge_reward = self._calculate_knowledge_reward(old_state, new_state)
+        engagement_reward = self._calculate_engagement_reward(old_state, new_state)
+        quality_reward = self._calculate_quality_reward(interaction_metrics)
+        exploration_reward = self._calculate_exploration_reward(new_state)
+        emotional_reward = self._calculate_emotional_reward(old_state, new_state)
+        
+        # Combine rewards with dynamic weighting
+        total_reward = (
+            3.0 * knowledge_reward +
+            2.0 * engagement_reward +
+            1.0 * quality_reward +
+            0.5 * exploration_reward +
+            1.5 * emotional_reward  # Significant weight for emotional impact
+        )
+        
+        # Normalize reward using adaptive scaling
+        self.update_reward_scale(total_reward)
+        normalized_reward = total_reward / self.reward_scale
+        return float(np.clip(normalized_reward, -5.0, 5.0))
+    def _calculate_emotional_reward(self, old_state: Dict, new_state: Dict) -> float:
+        """Calculate reward based on emotional improvement"""
+        # Get emotional context data
+        old_emotions = old_state.get("emotional_context", {})
+        new_emotions = new_state.get("emotional_context", {})
+        
+        # Get sentiment trends
+        old_sentiments = old_emotions.get("sentiment_trend", [])
+        new_sentiments = new_emotions.get("sentiment_trend", [])
+        # If we don't have enough history, return neutral reward
+        if not old_sentiments or not new_sentiments:
+            return 0.0
+            
+        # Calculate average sentiment change
+        old_avg = sum(old_sentiments[-3:]) / max(1, len(old_sentiments[-3:]))
+        new_avg = sum(new_sentiments[-3:]) / max(1, len(new_sentiments[-3:]))
+        sentiment_change = new_avg - old_avg
+        
+        # Check for specific emotional improvements
+        old_frustration_count = len(old_emotions.get("frustration_points", []))
+        new_frustration_count = len(new_emotions.get("frustration_points", []))
+        frustration_reduction = old_frustration_count > new_frustration_count
+        
+        # Calculate combined emotional reward
+        emotional_reward = sentiment_change * 2.0
+        if frustration_reduction:
+            emotional_reward += 0.5
+            
+        # Keep history for adaptive scaling
+        self.emotional_impact_history.append(emotional_reward)
+        if len(self.emotional_impact_history) > 100:
+            self.emotional_impact_history.pop(0)
+        return emotional_reward
+    def _calculate_knowledge_reward(self, old_state: Dict, new_state: Dict) -> float:
+        knowledge_delta = new_state['knowledge_level'] - old_state['knowledge_level']
+        
+        # Progressive reward scaling
+        if len(self.knowledge_history) > 1:
+            avg_gain = np.mean(np.diff(self.knowledge_history[-10:]))
+            if knowledge_delta > avg_gain:
+                return knowledge_delta * 1.5  # Bonus for above-average gains
+        return knowledge_delta
+    def _calculate_engagement_reward(self, old_state: Dict, new_state: Dict) -> float:
+        engagement_delta = new_state['engagement'] - old_state['engagement']
+        current_engagement = new_state['engagement']
+        
+        # Dynamic engagement rewards
+        if current_engagement < 0.2:
+            return -2.0  # Severe penalty for very low engagement
+        elif current_engagement > 0.8:
+            return engagement_delta * 1.5  # Bonus for maintaining high engagement
+        return engagement_delta
+    def _calculate_quality_reward(self, metrics: Dict) -> float:
+        response_length = metrics.get('response_length', 0)
+        used_interests = metrics.get('used_interests', False)
+        quality_score = 0.0
+        
+        # Response length quality
+        if 50 <= response_length <= 500:
+            quality_score += 0.5
+        elif response_length > 1000:
+            quality_score -= 0.5
+        
+        # Context utilization
+        if used_interests:
+            quality_score += 1.0
+        return quality_score
+    def _calculate_exploration_reward(self, state: Dict) -> float:
+        # Reward for exploring new topics and maintaining diverse interests
+        topics_count = len(state.get('recent_topics', []))
+        interests_count = len(state.get('interests', []))
+        exploration_score = 0.0
+        if topics_count > 0:
+            exploration_score += min(1.0, topics_count / 10.0)
+        if interests_count > 0:
+            exploration_score += min(1.0, interests_count / 10.0)
+        return exploration_score / 2.0
+    def update_reward_scale(self, reward: float):
+        # Adaptive reward scaling
+        if len(self.engagement_history) > 100:
+            self.reward_scale = max(1.0, abs(reward) * 0.95 + self.reward_scale * 0.05)
 
-# Pydantic models with JSON serialization
-class Message(BaseModel):
-    role: str
-    content: str
-    timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow)
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
+class MultiModelOrchestrator:
+    def __init__(self, openai_client):
+        self.client = openai_client
+        self.models = {
+            'primary': "gpt-4",
+            'fast': "gpt-3.5-turbo",
+            'analysis': "gpt-4-turbo-preview",
+            'specialized': "gpt-4-1106-preview"
         }
-        arbitrary_types_allowed = True
-    def dict(self, *args, **kwargs):
-        d = super().dict(*args, **kwargs)
-        if d.get('timestamp'):
-            d['timestamp'] = serialize_datetime(d['timestamp'])
-        return d
+        self._initialized = False
 
-class ChatRequest(BaseModel):
-    message: str
-    user_id: str
+    async def initialize(self):
+        """Initialize the model orchestrator"""
+        try:
+            self._initialized = True
+            logger.info("Model orchestrator initialized successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize model orchestrator: {str(e)}")
+            raise
 
-class ChatResponse(BaseModel):
-    response: str
-    teaching_strategy: Dict[str, Any]
+    async def get_response(self, messages, model_type='primary', temperature=0.7, max_tokens=2000):
+        """Get response from the appropriate model"""
+        model = self.models.get(model_type, self.models['primary'])
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error with {model}: {str(e)}")
+            if model_type != 'fast':
+                return await self.get_response(messages, 'fast', temperature, max_tokens)
+            raise
 
-class UserState(BaseModel):
-    user_id: str
-    knowledge_level: float = 0.5
-    engagement: float = 0.5
-    interests: List[str] = Field(default_factory=list)
-    recent_topics: List[str] = Field(default_factory=list)
-    performance: float = 0.5
-    chat_history: List[Dict[str, Any]] = Field(default_factory=list)
-    last_updated: datetime = Field(default_factory=datetime.utcnow)
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-        arbitrary_types_allowed = True
-
-# State representation for RL
-STATE_DIM = 10
-ACTION_DIM = 5
-
-# RL Networks
 class PolicyNetwork(nn.Module):
     def __init__(self):
         super(PolicyNetwork, self).__init__()
@@ -155,15 +350,6 @@ class ValueNetwork(nn.Module):
     def forward(self, state):
         return self.network(state)
 
-# PPO specific parameters
-PPO_EPOCHS = 10
-CLIP_EPSILON = 0.2
-VALUE_LOSS_COEF = 0.5
-ENTROPY_COEF = 0.01
-MAX_GRAD_NORM = 0.5
-BATCH_SIZE = 32
-BUFFER_SIZE = 1000
-
 class PPOMemory:
     def __init__(self, batch_size=32):
         self.states = []
@@ -200,6 +386,177 @@ class PPOMemory:
         )
     def __len__(self):
         return len(self.states)
+
+class EnhancedUserStateManager:
+    def __init__(self, db):
+        self.db = db
+        self.cache = {}
+        self.state_encoder = StateEncoder()
+        self._initialized = False
+
+    async def initialize(self):
+        try:
+            await self.db.user_states.create_index("user_id", unique=True)
+            self._initialized = True
+        except Exception as e:
+            logger.error(f"Failed to initialize state manager: {str(e)}")
+            raise
+
+    async def get_state(self, user_id: str) -> Dict:
+        if not self._initialized:
+            await self.initialize()
+            
+        if user_id not in self.cache:
+            state = await self.db.user_states.find_one({"user_id": user_id})
+            if not state:
+                state = self._create_initial_state(user_id)
+            self.cache[user_id] = state
+        return self.cache[user_id]
+
+    async def update_state(self, user_id: str, updates: Dict):
+        if not self._initialized:
+            await self.initialize()
+            
+        current_state = await self.get_state(user_id)
+        current_state.update(updates)
+        self.cache[user_id] = current_state
+        
+        # Sync with database
+        await self.db.user_states.update_one(
+            {"user_id": user_id},
+            {"$set": current_state},
+            upsert=True
+        )
+
+    async def update_emotional_context(self, user_id: str, emotion_data: Dict):
+        state = await self.get_state(user_id)
+        if "emotional_context" not in state:
+            state["emotional_context"] = {
+                "recent_emotions": [],
+                "sentiment_trend": [],
+                "frustration_points": []
+            }
+        
+        # Update emotional context
+        state["emotional_context"]["recent_emotions"].append({
+            "emotion": emotion_data.get("dominant_emotion"),
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        
+        # Keep only recent emotions
+        state["emotional_context"]["recent_emotions"] = state["emotional_context"]["recent_emotions"][-10:]
+        
+        # Update sentiment trend
+        sentiment = emotion_data.get("sentiment", {}).get("compound", 0)
+        state["emotional_context"]["sentiment_trend"].append(sentiment)
+        state["emotional_context"]["sentiment_trend"] = state["emotional_context"]["sentiment_trend"][-20:]
+        
+        await self.update_state(user_id, state)
+
+    def _create_initial_state(self, user_id: str) -> Dict:
+        return {
+            "user_id": user_id,
+            "knowledge_level": 0.5,
+            "engagement": 0.5,
+            "interests": [],
+            "recent_topics": [],
+            "learning_style": {
+                "visual": 0.5,
+                "verbal": 0.5,
+                "active": 0.5,
+                "reflective": 0.5
+            },
+            "emotional_context": {
+                "recent_emotions": [],
+                "sentiment_trend": [],
+                "frustration_points": []
+            },
+            "communication_style": {
+                "vocabulary_level": 0.5,
+                "formality": 0.5,
+                "verbosity": 0.5
+            },
+            "session_metrics": {
+                "messages_count": 0,
+                "avg_response_time": 0,
+                "topic_mastery": {},
+                "engagement_trend": []
+            },
+            "chat_history": [],
+            "last_updated": datetime.utcnow().isoformat()
+        }
+
+# Now initialize components after all class definitions
+state_encoder = StateEncoder()
+reward_calculator = RewardCalculator()
+model_orchestrator = MultiModelOrchestrator(openai_client)
+emotion_detector = EmotionDetector()
+emotional_adjuster = EmotionalResponseAdjuster()
+memory_manager = MemoryManager()
+feedback_collector = AssistantsFeedbackCollector()
+state_manager = None  # Will be initialized after MongoDB connection
+
+def serialize_datetime(dt):
+    """Convert datetime to ISO format string"""
+    if isinstance(dt, str):
+        return dt
+    return dt.isoformat() if dt else None
+
+def parse_datetime(dt_str):
+    """Parse ISO format string to datetime"""
+    if isinstance(dt_str, datetime):
+        return dt_str
+    return datetime.fromisoformat(dt_str) if dt_str else None
+
+# Pydantic models with JSON serialization
+class Message(BaseModel):
+    role: str
+    content: str
+    timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+        arbitrary_types_allowed = True
+    def dict(self, *args, **kwargs):
+        d = super().model_dump(*args, **kwargs)
+        if d.get('timestamp'):
+            d['timestamp'] = serialize_datetime(d['timestamp'])
+        return d
+
+class ChatRequest(BaseModel):
+    message: str
+    user_id: str
+
+class ChatResponse(BaseModel):
+    response: str
+    teaching_strategy: Dict[str, Any]
+
+class UserState(BaseModel):
+    user_id: str
+    knowledge_level: float = 0.5
+    engagement: float = 0.5
+    interests: List[str] = Field(default_factory=list)
+    chat_history: List[Dict[str, Any]] = Field(default_factory=list)
+    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+        arbitrary_types_allowed = True
+
+# State representation for RL
+STATE_DIM = 10
+ACTION_DIM = 5
+
+# PPO specific parameters
+PPO_EPOCHS = 10
+CLIP_EPSILON = 0.2
+VALUE_LOSS_COEF = 0.5
+ENTROPY_COEF = 0.01
+MAX_GRAD_NORM = 0.5
+BATCH_SIZE = 32
+BUFFER_SIZE = 1000
 
 # Initialize networks and memory
 policy_net = PolicyNetwork()
@@ -252,7 +609,7 @@ async def load_from_db(user_id: str):
             user_states[user_id] = state_doc
         else:
             # Initialize new user state
-            user_states[user_id] = UserState(user_id=user_id).dict()
+            user_states[user_id] = UserState(user_id=user_id).model_dump()
     except Exception as e:
         logger.error(f"Error loading from database: {str(e)}")
         raise HTTPException(status_code=500, detail="Database loading failed")
@@ -267,78 +624,6 @@ async def save_chat_history(user_id: str, message: Message):
         logger.error(f"Error saving chat history: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to save chat history")
 
-# Enhanced State Space Encoding
-class StateEncoder:
-    def __init__(self, state_dim=10):
-        self.state_dim = state_dim
-    def encode_state(self, user_state: Dict) -> torch.Tensor:
-        # Knowledge components (3 dimensions)
-        knowledge_level = float(user_state.get('knowledge_level', 0.5))
-        recent_performance = float(user_state.get('performance', 0.5))
-        topic_mastery = len(user_state.get('recent_topics', [])) / 10.0
-        
-        # Engagement components (3 dimensions)
-        current_engagement = float(user_state.get('engagement', 0.5))
-        interaction_frequency = min(1.0, len(user_state.get('chat_history', [])) / 50.0)
-        interest_diversity = len(user_state.get('interests', [])) / 10.0
-        
-        # Learning style components (4 dimensions)
-        avg_response_length = min(1.0, sum(len(msg.get('content', '')) 
-                                         for msg in user_state.get('chat_history', [])[-5:]) / 2500)
-        preferred_complexity = self._calculate_preferred_complexity(user_state)
-        learning_speed = self._calculate_learning_speed(user_state)
-        interaction_style = self._calculate_interaction_style(user_state)
-        
-        return torch.tensor([
-            knowledge_level,
-            recent_performance,
-            topic_mastery,
-            current_engagement,
-            interaction_frequency,
-            interest_diversity,
-            avg_response_length,
-            preferred_complexity,
-            learning_speed,
-            interaction_style
-        ], dtype=torch.float32)
-
-    def _calculate_preferred_complexity(self, user_state: Dict) -> float:
-        chat_history = user_state.get('chat_history', [])
-        if not chat_history:
-            return 0.5
-        # Analyze last 5 successful interactions
-        complexity_scores = []
-        for msg in chat_history[-10:]:
-            if msg.get('role') == 'assistant':
-                content = msg.get('content', '')
-                # Estimate complexity based on sentence length and vocabulary
-                words = content.split()
-                avg_word_length = sum(len(word) for word in words) / len(words) if words else 0
-                complexity = min(1.0, (avg_word_length - 3) / 5)
-                complexity_scores.append(complexity)
-        return sum(complexity_scores) / len(complexity_scores) if complexity_scores else 0.5
-
-    def _calculate_learning_speed(self, user_state: Dict) -> float:
-        knowledge_history = user_state.get('knowledge_history', [])
-        if len(knowledge_history) < 2:
-            return 0.5
-        # Calculate average knowledge gain per interaction
-        gains = [k2 - k1 for k1, k2 in zip(knowledge_history[:-1], knowledge_history[1:])]
-        avg_gain = sum(gains) / len(gains)
-        return min(1.0, max(0.0, avg_gain * 5))  # Normalize to [0,1]
-
-    def _calculate_interaction_style(self, user_state: Dict) -> float:
-        chat_history = user_state.get('chat_history', [])
-        if not chat_history:
-            return 0.5
-        # Analyze user messages for interaction style
-        user_messages = [msg for msg in chat_history if msg.get('role') == 'user']
-        if not user_messages:
-            return 0.5
-        # Calculate ratio of questions to statements
-        question_count = sum(1 for msg in user_messages if '?' in msg.get('content', ''))
-        return question_count / len(user_messages)
-
 # Enhanced Reward Function
 class RewardCalculator:
     def __init__(self):
@@ -346,7 +631,6 @@ class RewardCalculator:
         self.knowledge_history = []
         self.reward_scale = 1.0
         self.emotional_impact_history = []
-        
     def calculate_reward(
         self,
         old_state: Dict[str, float],
@@ -376,9 +660,7 @@ class RewardCalculator:
         # Normalize reward using adaptive scaling
         self.update_reward_scale(total_reward)
         normalized_reward = total_reward / self.reward_scale
-        
         return float(np.clip(normalized_reward, -5.0, 5.0))
-
     def _calculate_emotional_reward(self, old_state: Dict, new_state: Dict) -> float:
         """Calculate reward based on emotional improvement"""
         # Get emotional context data
@@ -388,7 +670,6 @@ class RewardCalculator:
         # Get sentiment trends
         old_sentiments = old_emotions.get("sentiment_trend", [])
         new_sentiments = new_emotions.get("sentiment_trend", [])
-        
         # If we don't have enough history, return neutral reward
         if not old_sentiments or not new_sentiments:
             return 0.0
@@ -412,9 +693,7 @@ class RewardCalculator:
         self.emotional_impact_history.append(emotional_reward)
         if len(self.emotional_impact_history) > 100:
             self.emotional_impact_history.pop(0)
-            
         return emotional_reward
-
     def _calculate_knowledge_reward(self, old_state: Dict, new_state: Dict) -> float:
         knowledge_delta = new_state['knowledge_level'] - old_state['knowledge_level']
         
@@ -424,7 +703,6 @@ class RewardCalculator:
             if knowledge_delta > avg_gain:
                 return knowledge_delta * 1.5  # Bonus for above-average gains
         return knowledge_delta
-
     def _calculate_engagement_reward(self, old_state: Dict, new_state: Dict) -> float:
         engagement_delta = new_state['engagement'] - old_state['engagement']
         current_engagement = new_state['engagement']
@@ -434,13 +712,10 @@ class RewardCalculator:
             return -2.0  # Severe penalty for very low engagement
         elif current_engagement > 0.8:
             return engagement_delta * 1.5  # Bonus for maintaining high engagement
-        
         return engagement_delta
-
     def _calculate_quality_reward(self, metrics: Dict) -> float:
         response_length = metrics.get('response_length', 0)
         used_interests = metrics.get('used_interests', False)
-        
         quality_score = 0.0
         
         # Response length quality
@@ -452,22 +727,17 @@ class RewardCalculator:
         # Context utilization
         if used_interests:
             quality_score += 1.0
-        
         return quality_score
-
     def _calculate_exploration_reward(self, state: Dict) -> float:
         # Reward for exploring new topics and maintaining diverse interests
         topics_count = len(state.get('recent_topics', []))
         interests_count = len(state.get('interests', []))
-        
         exploration_score = 0.0
         if topics_count > 0:
             exploration_score += min(1.0, topics_count / 10.0)
         if interests_count > 0:
             exploration_score += min(1.0, interests_count / 10.0)
-        
         return exploration_score / 2.0
-
     def update_reward_scale(self, reward: float):
         # Adaptive reward scaling
         if len(self.engagement_history) > 100:
@@ -476,8 +746,11 @@ class RewardCalculator:
 # Initialize enhanced components
 state_encoder = StateEncoder()
 reward_calculator = RewardCalculator()
-policy_net = PolicyNetwork()
-memory = PPOMemory(BATCH_SIZE)
+model_orchestrator = MultiModelOrchestrator(openai_client)
+emotion_detector = EmotionDetector()
+emotional_adjuster = EmotionalResponseAdjuster()
+memory_manager = MemoryManager()
+feedback_collector = AssistantsFeedbackCollector()
 
 async def get_user_state(user_id: str) -> torch.Tensor:
     try:
@@ -528,7 +801,6 @@ async def generate_personalized_response(
     """Generate personalized response using OpenAI's GPT-4"""
     try:
         user_context = user_states.get(user_id, {})
-        
         system_prompt = f"""You are a personalized AI tutor. Use the following teaching strategy:
         - Teaching style: {teaching_strategy['style']}
         - Complexity level: {teaching_strategy['complexity']}
@@ -548,7 +820,6 @@ async def generate_personalized_response(
         chat_history = user_context.get('chat_history', [])[-5:]
         messages[1:1] = [{"role": msg["role"], "content": msg["content"]} for msg in chat_history]
 
-        # Use synchronous call through the orchestrator
         response = await model_orchestrator.get_response(messages)
         return response
     except Exception as e:
@@ -567,15 +838,12 @@ class ExperienceBuffer:
     def __init__(self, capacity: int = 1000):
         self.buffer = []
         self.capacity = capacity
-        
     def add(self, experience: Experience):
         if len(self.buffer) >= self.capacity:
             self.buffer.pop(0)
         self.buffer.append(experience)
-        
     def sample(self, batch_size: int) -> List[Experience]:
         return random.sample(self.buffer, min(batch_size, len(self.buffer)))
-        
     def __len__(self):
         return len(self.buffer)
 
@@ -592,7 +860,7 @@ async def train_policy():
         
         # Calculate advantages
         with torch.no_grad():
-            next_values = value_net(next_states)
+            next_values = value_net(next_states).squeeze(1)
             advantages = rewards.unsqueeze(1) + 0.99 * next_values - old_values.unsqueeze(1)
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
@@ -623,7 +891,7 @@ async def train_policy():
         
         policy_optimizer.step()
         value_optimizer.step()
-        
+    
     # Clear memory after updates
     memory.clear()
     
@@ -695,7 +963,7 @@ async def chat_endpoint(request: Request, chat_request: ChatRequest):
         # Verify user exists
         user = await user_states_collection.find_one({"user_id": chat_request.user_id})
         if not user:
-            user_state = UserState(user_id=chat_request.user_id).dict()
+            user_state = UserState(user_id=chat_request.user_id).model_dump()
             await user_states_collection.insert_one(user_state)
             user_states[chat_request.user_id] = user_state
 
@@ -712,9 +980,9 @@ async def chat_endpoint(request: Request, chat_request: ChatRequest):
         
         # Generate response
         response = await generate_personalized_response(
-            chat_request.message,
-            chat_request.user_id,
-            teaching_strategy
+            message=chat_request.message,
+            user_id=chat_request.user_id,
+            teaching_strategy=teaching_strategy
         )
         
         # Create and save messages
@@ -724,9 +992,9 @@ async def chat_endpoint(request: Request, chat_request: ChatRequest):
         
         # Update chat history and state
         if chat_request.user_id not in user_states:
-            user_states[chat_request.user_id] = UserState(user_id=chat_request.user_id).dict()
-        user_states[chat_request.user_id]['chat_history'].append(user_message.dict())
-        user_states[chat_request.user_id]['chat_history'].append(assistant_message.dict())
+            user_states[chat_request.user_id] = UserState(user_id=chat_request.user_id).model_dump()
+        user_states[chat_request.user_id]['chat_history'].append(user_message.model_dump())
+        user_states[chat_request.user_id]['chat_history'].append(assistant_message.model_dump())
         
         # Save to database
         await save_chat_history(chat_request.user_id, user_message)
@@ -883,7 +1151,6 @@ Previous Context:
             "teaching_strategy": teaching_strategy
         }
         memory_manager.add_memory(user_id, f"Q: {message}\nA: {adjusted_response[:200]}", memory_context)
-
         return adjusted_response
 
     except Exception as e:
@@ -893,13 +1160,11 @@ Previous Context:
 def extract_topic_context(recent_interactions: List[Dict]) -> Dict[str, Any]:
     """Extract relevant context from recent interactions"""
     context = {}
-    
     if not recent_interactions:
         return context
     
     # Collect all user messages
     user_messages = [msg['content'] for msg in recent_interactions if msg.get('role') == 'user']
-    
     # Extract key topics using simple keyword frequency
     if user_messages:
         all_text = ' '.join(user_messages)
@@ -918,7 +1183,6 @@ def extract_topic_context(recent_interactions: List[Dict]) -> Dict[str, Any]:
         
         # Get the most recent question
         context['last_question'] = user_messages[-1]
-    
     return context
 
 def format_topic_mastery(mastery_levels: Dict[str, float]) -> str:
@@ -930,14 +1194,12 @@ def format_topic_mastery(mastery_levels: Dict[str, float]) -> str:
     for topic, level in mastery_levels.items():
         mastery_desc = "Beginner" if level < 0.3 else "Intermediate" if level < 0.7 else "Advanced"
         result += f"- {topic}: {mastery_desc} ({level:.2f})\n"
-    
     return result
 
 def format_recent_context(context: Dict) -> str:
     """Format recent context for prompt"""
     if not context:
         return "No recent context available."
-    
     result = ""
     
     if 'keywords' in context:
@@ -945,7 +1207,6 @@ def format_recent_context(context: Dict) -> str:
     
     if 'last_question' in context:
         result += f"Previous question: {context['last_question']}"
-    
     return result
 
 def calculate_text_complexity(text: str) -> float:
@@ -958,12 +1219,11 @@ def calculate_text_complexity(text: str) -> float:
     avg_word_length = sum(len(word) for word in words) / max(len(words), 1)
     
     # Normalize scores (empirically derived thresholds)
-    sentence_score = min(1.0, avg_sentence_length / 25.0) # 25 words → score of 1
+    sentence_score = min(1.0, avg_sentence_length / 25.0)  # 25 words → score of 1
     word_score = min(1.0, (avg_word_length - 3) / 5.0)    # 8-letter words → score of 1
     
     # Combine scores (weighted average)
     complexity = 0.6 * sentence_score + 0.4 * word_score
-    
     return complexity
 
 @app.post("/chat", response_model=ChatResponse)
@@ -994,11 +1254,15 @@ async def chat_endpoint(request: ChatRequest):
             action = dist.sample().item()
             action_log_prob = dist.log_prob(torch.tensor(action)).item()
         
-        # Convert action to teaching strategy
         teaching_strategy = strategies[action]
         
         # Generate personalized response with emotion adjustment
-        response = await generate_enhanced_response(message, user_id, teaching_strategy, emotion_data)
+        response = await generate_enhanced_response(
+            message=message,
+            user_id=user_id,
+            teaching_strategy=teaching_strategy,
+            emotion_data=emotion_data
+        )
         
         # Update user state with the new interaction
         user_state["chat_history"].append({"role": "user", "content": message})
@@ -1009,7 +1273,7 @@ async def chat_endpoint(request: ChatRequest):
         # Get next state representation
         next_state = state_encoder.encode_state(user_state)
         
-        # Calculate reward
+        # Calculate rewards
         interaction_metrics = {"response_quality": 0.8, "response_time": 1.2}  # Example metrics
         reward = reward_calculator.calculate_reward(old_state, user_state, interaction_metrics)
         
@@ -1019,7 +1283,7 @@ async def chat_endpoint(request: ChatRequest):
         
         # Train policy if necessary
         if await should_train():
-            training_stats = await train_policy_enhanced()
+            training_stats = await train_policy()
             logger.info(f"Training completed: {training_stats}")
         
         return ChatResponse(
@@ -1030,7 +1294,7 @@ async def chat_endpoint(request: ChatRequest):
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
-        
+
 def calculate_interaction_metrics(user_state: Dict) -> Dict:
     """Calculate metrics for the current interaction session"""
     return {
@@ -1058,178 +1322,74 @@ def calculate_gae(rewards, values, next_values, gamma, gae_lambda):
         delta = rewards[step] + gamma * next_values[step] - values[step]
         gae = delta + gamma * gae_lambda * gae
         advantages.insert(0, gae)
-    
     return torch.tensor(advantages, dtype=torch.float32)
-
-class MultiModelOrchestrator:
-    def __init__(self, openai_client):
-        self.client = openai_client
-        self.models = {
-            'primary': "gpt-4",
-            'fast': "gpt-3.5-turbo",
-            'analysis': "gpt-4-turbo-preview",
-            'specialized': "gpt-4-1106-preview"
-        }
-        self._initialized = False
-
-    async def initialize(self):
-        """Initialize the model orchestrator"""
-        try:
-            # Simple initialization test without API call
-            self._initialized = True
-            logger.info("Model orchestrator initialized successfully")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to initialize model orchestrator: {str(e)}")
-            raise
-
-    async def get_response(self, messages, model_type='primary', temperature=0.7, max_tokens=2000):
-        """Get response from the appropriate model"""
-        model = self.models.get(model_type, self.models['primary'])
-        try:
-            # Use synchronous call but wrap in async context
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"Error with {model}: {str(e)}")
-            if model_type != 'fast':
-                return await self.get_response(messages, 'fast', temperature, max_tokens)
-            raise
-
-class EnhancedUserStateManager:
-    def __init__(self, db):
-        self.db = db
-        self.cache = {}
-        self.state_encoder = StateEncoder()
-        self._initialized = False
-
-    async def initialize(self):
-        """Initialize the state manager"""
-        try:
-            await self.db.user_states.create_index("user_id", unique=True)
-            self._initialized = True
-        except Exception as e:
-            logger.error(f"Failed to initialize state manager: {str(e)}")
-            raise
-
-    async def get_state(self, user_id: str) -> Dict:
-        if not self._initialized:
-            await self.initialize()
-            
-        if user_id not in self.cache:
-            state = await self.db.user_states.find_one({"user_id": user_id})
-            if not state:
-                state = self._create_initial_state(user_id)
-            self.cache[user_id] = state
-        return self.cache[user_id]
-
-    async def update_state(self, user_id: str, updates: Dict):
-        if not self._initialized:
-            await self.initialize()
-            
-        current_state = await self.get_state(user_id)
-        current_state.update(updates)
-        self.cache[user_id] = current_state
-        
-        # Sync with database
-        await self.db.user_states.update_one(
-            {"user_id": user_id},
-            {"$set": current_state},
-            upsert=True
-        )
-
-    async def update_emotional_context(self, user_id: str, emotion_data: Dict):
-        state = await self.get_state(user_id)
-        if "emotional_context" not in state:
-            state["emotional_context"] = {
-                "recent_emotions": [],
-                "sentiment_trend": [],
-                "frustration_points": []
-            }
-        
-        # Update emotional context
-        state["emotional_context"]["recent_emotions"].append({
-            "emotion": emotion_data.get("dominant_emotion"),
-            "timestamp": datetime.utcnow().isoformat()
-        })
-        
-        # Keep only recent emotions
-        state["emotional_context"]["recent_emotions"] = state["emotional_context"]["recent_emotions"][-10:]
-        
-        # Update sentiment trend
-        sentiment = emotion_data.get("sentiment", {}).get("compound", 0)
-        state["emotional_context"]["sentiment_trend"].append(sentiment)
-        state["emotional_context"]["sentiment_trend"] = state["emotional_context"]["sentiment_trend"][-20:]
-        
-        await self.update_state(user_id, state)
-
-    def _create_initial_state(self, user_id: str) -> Dict:
-        return {
-            "user_id": user_id,
-            "knowledge_level": 0.5,
-            "engagement": 0.5,
-            "interests": [],
-            "recent_topics": [],
-            "learning_style": {
-                "visual": 0.5,
-                "verbal": 0.5,
-                "active": 0.5,
-                "reflective": 0.5
-            },
-            "emotional_context": {
-                "recent_emotions": [],
-                "sentiment_trend": [],
-                "frustration_points": []
-            },
-            "communication_style": {
-                "vocabulary_level": 0.5,
-                "formality": 0.5,
-                "verbosity": 0.5
-            },
-            "session_metrics": {
-                "messages_count": 0,
-                "avg_response_time": 0,
-                "topic_mastery": {},
-                "engagement_trend": []
-            },
-            "chat_history": [],
-            "last_updated": datetime.utcnow().isoformat()
-        }
-
-# Initialize components
-state_encoder = StateEncoder()
-reward_calculator = RewardCalculator()
-policy_net = PolicyNetwork()
-value_net = ValueNetwork()
-memory = PPOMemory(BATCH_SIZE)
-model_orchestrator = MultiModelOrchestrator(openai_client)
-state_manager = EnhancedUserStateManager(db)
-emotion_detector = EmotionDetector()
-emotional_adjuster = EmotionalResponseAdjuster()
-memory_manager = MemoryManager()
 
 # Update the chat endpoint to use enhanced response generation
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     """Handle chat requests"""
     try:
-        # ...existing try block code...
+        user_id = request.user_id
+        message = request.message
+        
+        # Analyze message for emotional content
+        emotion_data = emotion_detector.detect_emotion(message)
+        
+        # Get current user state
+        user_state = await state_manager.get_state(user_id)
+        old_state = copy.deepcopy(user_state)
+        
+        # Update emotional context and communication style
+        await state_manager.update_emotional_context(user_id, emotion_data)
+        await state_manager.update_communication_style(user_id, message)
+        
+        # Get current state representation for RL
+        state = state_encoder.encode_state(user_state)
+        
+        # Select teaching strategy with current policy
+        with torch.no_grad():
+            action_probs = policy_net(state)
+            dist = torch.distributions.Categorical(action_probs)
+            action = dist.sample().item()
+            action_log_prob = dist.log_prob(torch.tensor(action)).item()
+        
+        teaching_strategy = strategies[action]
         
         # Generate personalized response with emotion adjustment
         response = await generate_enhanced_response(
-            message=request.message,
-            user_id=request.user_id,
+            message=message,
+            user_id=user_id,
             teaching_strategy=teaching_strategy,
             emotion_data=emotion_data
         )
         
-        # ...rest of existing code...
-
+        # Update user state with the new interaction
+        user_state["chat_history"].append({"role": "user", "content": message})
+        user_state["chat_history"].append({"role": "assistant", "content": response})
+        user_state["session_metrics"]["messages_count"] += 1
+        await state_manager.update_state(user_id, user_state)
+        
+        # Get next state representation
+        next_state = state_encoder.encode_state(user_state)
+        
+        # Calculate rewards
+        interaction_metrics = {"response_quality": 0.8, "response_time": 1.2}  # Example metrics
+        reward = reward_calculator.calculate_reward(old_state, user_state, interaction_metrics)
+        
+        # Add experience to memory
+        value = value_net(state).item()
+        memory.add(state, action, reward, next_state, action_log_prob, value)
+        
+        # Train policy if necessary
+        if await should_train():
+            training_stats = await train_policy()
+            logger.info(f"Training completed: {training_stats}")
+        
+        return ChatResponse(
+            response=response,
+            teaching_strategy=teaching_strategy,
+            metrics=calculate_interaction_metrics(user_state)
+        )
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -1239,10 +1399,17 @@ async def chat_endpoint(request: ChatRequest):
 async def startup_event():
     """Initialize all components on startup"""
     try:
-        # Initialize database connections
-        await db.command("ping")
+        # Create models directory if it doesn't exist
+        os.makedirs("models", exist_ok=True)
         
-        # Create indexes
+        # Initialize MongoDB first
+        await init_mongodb()
+        
+        # Initialize state manager after MongoDB is ready
+        global state_manager
+        state_manager = EnhancedUserStateManager(db)
+        
+        # Create indexes after DB is initialized
         await users_collection.create_index("user_id")
         await chat_history_collection.create_index([("user_id", 1), ("timestamp", -1)])
         await user_states_collection.create_index("user_id", unique=True)
@@ -1250,40 +1417,40 @@ async def startup_event():
         # Initialize stateful components
         await state_manager.initialize()
         await model_orchestrator.initialize()
+        await assistants_manager.initialize()
         
+        # Initialize model weights if they don't exist
+        if not os.path.exists("models/policy_net.pth"):
+            torch.save(policy_net.state_dict(), "models/policy_net.pth")
+            logger.info("Created new policy network weights")
+        if not os.path.exists("models/value_net.pth"):
+            torch.save(value_net.state_dict(), "models/value_net.pth")
+            logger.info("Created new value network weights")
+            
+        # Load model weights
+        try:
+            policy_net.load_state_dict(torch.load("models/policy_net.pth"))
+            value_net.load_state_dict(torch.load("models/value_net.pth"))
+            logger.info("Loaded existing model weights")
+        except Exception as e:
+            logger.error(f"Error loading model weights: {str(e)}")
+            raise
+
         logger.info("Application startup completed successfully")
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
         raise
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    if client:
+        client.close()
+        logger.info("MongoDB connection closed")
+
 # Add user management routes
 app.include_router(user_router, tags=["users"])
 
-# Update PPO configuration
-PPO_CONFIG = {
-    'batch_size': BATCH_SIZE,
-    'epochs': PPO_EPOCHS,
-    'clip_epsilon': CLIP_EPSILON,
-    'gamma': 0.99,
-    'gae_lambda': 0.95,
-    'value_loss_coef': VALUE_LOSS_COEF,
-    'entropy_coef': ENTROPY_COEF,
-    'max_grad_norm': MAX_GRAD_NORM,
-    'learning_rate': 0.001
-}
-
-@app.get("/user/{user_id}")
-async def get_user_data(user_id: str):
-    """Get user data including state and chat history"""
-    try:
-        user_state = await state_manager.get_state(user_id)
-        if not user_state:
-            raise HTTPException(status_code=404, detail="User not found")
-        return user_state
-    except Exception as e:
-        logger.error(f"Error getting user data: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to get user data")
-
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, loop="asyncio")
