@@ -1,43 +1,50 @@
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 class Settings(BaseSettings):
-    APP_NAME: str = "Mioo - AI Tutor"
-    APP_VERSION: str = "1.0.0"
-    
-    # OpenAI Config
-    OPENAI_API_KEY: str = ""
-    DEFAULT_MODEL: str = "gpt-4"
-    MAX_TOKENS: int = 2000
-    
-    # MongoDB Config  
-    MONGODB_URL: str = "mongodb://localhost:27017"
-    DB_NAME: str = "ai_tutor_db"
-    
-    # RL Config
-    PPO_CONFIG = {
-        'batch_size': 32,
-        'epochs': 10,
-        'clip_epsilon': 0.2,
-        'gamma': 0.99,
-        'gae_lambda': 0.95,
-        'value_loss_coef': 0.5,
-        'entropy_coef': 0.01,
-        'max_grad_norm': 0.5,
-        'learning_rate': 0.001
-    }
-    
-    # Rate Limiting
+    # API Settings
     RATE_LIMIT_MINUTE: int = 60
     RATE_LIMIT_HOUR: int = 1000
     
-    # Model Temperature Settings
-    TEMPERATURE_SETTINGS = {
-        'creative': 0.8,
-        'balanced': 0.7,
-        'precise': 0.5
-    }
+    # OpenAI Settings
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    
+    # MongoDB Settings
+    MONGODB_URL: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017")  # Changed to match .env
+    MONGODB_DB: str = os.getenv("MONGODB_DB", "mioo_db")  # Added to match .env
+    
+    # Model Settings
+    DEFAULT_MODEL: str = "gpt-4"
+    FALLBACK_MODEL: str = "gpt-3.5-turbo"
+    MAX_TOKENS: int = 2000
+    TEMPERATURE: float = 0.7
+    
+    # Training Settings
+    TRAINING_BATCH_SIZE: int = 32
+    TRAINING_EPOCHS: int = 10
+    INITIAL_EPSILON: float = 1.0
+    EPSILON_DECAY: float = 0.997
+    MIN_EPSILON: float = 0.01
+    LEARNING_RATE: float = 0.001
+    DISCOUNT_FACTOR: float = 0.99
+    
+    # Memory Settings
+    MAX_MEMORY_SIZE: int = 10000
+    MIN_MEMORY_FOR_TRAINING: int = 1000
+    
+    # Server Settings
+    HOST: str = "0.0.0.0"
+    PORT: int = 8000
+    CORS_ORIGINS: list = ["*"]
+    CORS_HEADERS: list = ["*"]
     
     class Config:
         env_file = ".env"
+        case_sensitive = True
+        # Allow extra fields from .env
+        extra = "allow"
 
 settings = Settings()

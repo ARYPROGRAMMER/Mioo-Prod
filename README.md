@@ -1,107 +1,96 @@
-# Mioo AI Tutor
+# Personalized AI Tutor - RL Model
 
-An adaptive learning platform powered by reinforcement learning and large language models.
+This reinforcement learning system adapts educational content based on high school student personas, specializing in mathematics education.
 
 ## Overview
 
-Mioo AI Tutor is an educational platform that adapts to each learner's unique needs. It uses reinforcement learning to optimize teaching strategies and leverages OpenAI's GPT-4o to provide personalized educational content.
+This project implements a reinforcement learning system that learns to adapt teaching content to match student preferences and learning styles. The system specializes in math education for high school students preparing for SAT/ACT exams.
 
-## Architecture
+## Features
 
-The system consists of three main components:
+- Persona-based content adaptation using reinforcement learning
+- Multiple teaching styles, difficulty levels, and thematic approaches
+- Content generation tailored to individual student preferences
+- Detailed evaluation metrics for measuring adaptation quality
 
-1. **Reinforcement Learning System**: A PPO (Proximal Policy Optimization) agent that selects the optimal teaching strategy based on the user's state.
-2. **Large Language Model Integration**: Uses OpenAI's GPT-4o to generate educational content tailored to the selected strategy.
-3. **User State Management**: Tracks user knowledge, engagement, and learning history to inform the RL agent.
+## Student Personas
 
-## Key Features
+The system is trained on 10 high school student personas:
 
-- **Adaptive Teaching Strategies**: Automatically selects from different teaching styles (detailed, concise, interactive, analogy-based, step-by-step).
-- **Personalized Complexity**: Adjusts the complexity level based on the user's knowledge.
-- **Dynamic Learning Assessment**: Continuously evaluates knowledge gain and engagement.
-- **Topic Mastery Tracking**: Visualizes progress across different topics.
-- **Feedback Integration**: Uses explicit feedback to improve the RL model.
-
-## Technical Stack
-
-- **Frontend**: Next.js, React, TypeScript, Tailwind CSS, Recharts
-- **Backend**: FastAPI, Python 3.10+
-- **ML/RL**: PyTorch, PPO algorithm
-- **LLM**: OpenAI API (GPT-4o)
-- **Database**: MongoDB with Motor for async operations
+1. **Ethan**: Sports enthusiast who prefers real-world examples
+2. **Olivia**: Video game fan who likes step-by-step problem solving
+3. **Mason**: Technology-oriented student who prefers concise instructions
+4. **Ava**: Foodie who benefits from visual learning aids
+5. **Logan**: Entertainment and media fan who likes detailed examples
+6. **Sophia**: Fashion-oriented student who prefers interactive learning
+7. **Jackson**: Music enthusiast who understands through analogies
+8. **Mia**: Theme park fan who enjoys story-based problems
+9. **Lucas**: Automotive enthusiast who likes bullet-point summaries
+10. **Isabella**: Photography fan who learns through visual examples
 
 ## Getting Started
 
-### Prerequisites
+### Installation
 
-- Python 3.10+
-- Node.js 16+
-- MongoDB
-- OpenAI API key
-
-### Backend Setup
-
-1. Clone the repository
+1. Clone this repository
 2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-3. Set environment variables:
-   ```
-   export OPENAI_API_KEY="your-api-key"
-   export MONGODB_URI="mongodb://localhost:27017"
-   export MONGODB_DB="mioo_tutor"
-   ```
-4. Run the backend:
-   ```
-   python main.py
-   ```
 
-### Frontend Setup
+```bash
+pip install -r requirements.txt
+```
 
-1. Navigate to the frontend directory:
-   ```
-   cd frontend
-   ```
-2. Install dependencies:
-   ```
-   npm install
-   ```
-3. Set up environment variables (create `.env.local`):
-   ```
-   NEXT_PUBLIC_API_URL=http://localhost:8000
-   ```
-4. Run the frontend:
-   ```
-   npm run dev
-   ```
+Or install as a package:
 
-## API Endpoints
+```bash
+pip install -e .
+```
 
-- `POST /chat`: Send a message to the AI tutor
-- `GET /user/{user_id}`: Get user state
-- `PUT /user/{user_id}`: Update user preferences
-- `POST /feedback`: Submit feedback for a message
-- `GET /learning-progress/{user_id}`: Get detailed learning progress
+### Training the Model
+
+Train the reinforcement learning model on the student personas:
+
+```bash
+python main.py --episodes 2000 --output-dir models --evaluate
+```
+
+### Generating Content
+
+Generate adaptive content for student personas:
+
+```bash
+python content_generation.py --model models/best_model.pth --sample
+```
+
+For a specific student:
+
+```bash
+python content_generation.py --model models/best_model.pth --persona Ethan --sample
+```
+
+### Evaluating Adaptation Quality
+
+Run evaluation metrics on the trained model:
+
+```bash
+python run_evaluation.py --model models/best_model.pth --output-dir evaluation_results
+```
 
 ## System Architecture
 
-```
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│   Frontend   │◄────►│  FastAPI API  │◄────►│   MongoDB    │
-└──────────────┘      └──────────────┘      └──────────────┘
-                            │  ▲
-                            ▼  │
-                     ┌──────────────┐
-                     │  RL System   │
-                     └──────────────┘
-                            │  ▲
-                            ▼  │
-                     ┌──────────────┐
-                     │  OpenAI API  │
-                     └──────────────┘
-```
+- `personas/`: Defines student personas and their attributes
+- `models/`: Implements the RL model and neural networks
+- `trainers/`: Contains training logic and environment simulation
+- `utils/`: Helper utilities for content generation and evaluation
+- `templates/`: Default configuration templates
+
+## How It Works
+
+1. The system extracts features from student personas
+2. The RL agent selects adaptation actions (style, difficulty, theme)
+3. A reward function evaluates how well the action matches the student's preferences
+4. The system learns over time to make better adaptation decisions
+5. Content is generated based on the selected adaptation approach
 
 ## License
 
-MIT
+This project is provided for educational purposes only.

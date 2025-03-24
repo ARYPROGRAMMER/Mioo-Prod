@@ -23,33 +23,25 @@ export interface LearningMetrics {
   interaction_quality: number;
 }
 
-export interface EnhancedMetrics extends LearningMetrics {
-  rl_stats: {
-    policy_loss: number;
-    value_loss: number;
-    entropy: number;
-    learning_rate: number;
-    success_rate: number;
-  };
-  adaptive_metrics: {
-    strategy_adaptation_rate: number;
-    response_quality_trend: number[];
-    context_relevance: number;
-    personalization_score: number;
-  };
-}
-
 export interface ChatResponse {
   response: string;
   teaching_strategy: TeachingStrategy;
   metrics: LearningMetrics;
-  human_feedback?: "like" | "dislike"; // new field for RLHF feedback
+  emotion_data?: {
+    dominant_emotion: string;
+    sentiment: {
+      compound: number;
+    };
+  };
 }
 
 export interface TeachingStrategy {
   style: string;
   complexity: string;
   examples: string;
+  theme?: string;
+  difficulty_level?: string;
+  adaptation_score?: number;
 }
 
 export interface SessionMetrics {
@@ -79,8 +71,6 @@ export interface UserState {
   last_updated: string;
   learning_history: LearningHistoryEntry[];
   session_metrics: SessionMetrics;
-  learning_style?: LearningStyle;
-  feedback_history?: Array<"like" | "dislike">;
 }
 
 export interface MessageAnalysis {
@@ -92,23 +82,10 @@ export interface MessageAnalysis {
 }
 
 export interface EnhancedChatRequest extends ChatRequest {
-  analysis?: MessageAnalysis;
-}
-
-export interface FeedbackRequest {
-  user_id: string;
-  message_id: string;
-  feedback: "like" | "dislike";
-}
-
-export interface FeedbackResponse {
-  status: string;
-  feedback_processed: boolean;
-}
-
-export interface LearningStyle {
-  visual: number;
-  interactive: number;
-  theoretical: number;
-  practical: number;
+  timestamp?: string;
+  analysis?: {
+    topic?: string;
+    complexity?: number;
+    context?: Record<string, any>;
+  };
 }
