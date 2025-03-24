@@ -27,12 +27,21 @@ export interface ChatResponse {
   response: string;
   teaching_strategy: TeachingStrategy;
   metrics: LearningMetrics;
+  emotion_data?: {
+    dominant_emotion: string;
+    sentiment: {
+      compound: number;
+    };
+  };
 }
 
 export interface TeachingStrategy {
   style: string;
   complexity: string;
   examples: string;
+  theme?: string;
+  difficulty_level?: string;
+  adaptation_score?: number;
 }
 
 export interface SessionMetrics {
@@ -73,5 +82,10 @@ export interface MessageAnalysis {
 }
 
 export interface EnhancedChatRequest extends ChatRequest {
-  analysis?: MessageAnalysis;
+  timestamp?: string;
+  analysis?: {
+    topic?: string;
+    complexity?: number;
+    context?: Record<string, any>;
+  };
 }

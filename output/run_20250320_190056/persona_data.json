@@ -1,0 +1,164 @@
+{
+  "studentPersonas": [
+    {
+      "name": "Ethan",
+      "educationLevel": "High School",
+      "satActTimeline": "0-2 years",
+      "mathMastery": {
+        "Algebra": "Grade 11",
+        "Geometry": "Grade 10",
+        "Trigonometry": "Grade 9",
+        "Precalculus": "Grade 8",
+        "Data Analysis": "Grade 10",
+        "Statistics": "Grade 9",
+        "Linear Algebra": "Grade 10"
+      },
+      "likesTheme": "Sports (American Football)",
+      "learningStyle": "Prefers more examples with real-life applications."
+    },
+    {
+      "name": "Olivia",
+      "educationLevel": "High School",
+      "satActTimeline": "0-2 years",
+      "mathMastery": {
+        "Algebra": "Grade 9",
+        "Geometry": "Grade 8",
+        "Trigonometry": "Grade 7",
+        "Precalculus": "Grade 8",
+        "Data Analysis": "Grade 9",
+        "Statistics": "Grade 9",
+        "Linear Algebra": "Grade 7"
+      },
+      "likesTheme": "Popular Video Games (Fortnite, Minecraft)",
+      "learningStyle": "Prefers solved problem examples with clear step-by-step explanations."
+    },
+    {
+      "name": "Mason",
+      "educationLevel": "High School",
+      "satActTimeline": "0-2 years",
+      "mathMastery": {
+        "Algebra": "Grade 10",
+        "Geometry": "Grade 9",
+        "Trigonometry": "Grade 9",
+        "Precalculus": "Grade 10",
+        "Data Analysis": "Grade 8",
+        "Statistics": "Grade 8",
+        "Linear Algebra": "Grade 10"
+      },
+      "likesTheme": "Smartphones and Mobile Apps",
+      "learningStyle": "Prefers simple language and concise instructions."
+    },
+    {
+      "name": "Ava",
+      "educationLevel": "High School",
+      "satActTimeline": "0-2 years",
+      "mathMastery": {
+        "Algebra": "Grade 8",
+        "Geometry": "Grade 7",
+        "Trigonometry": "Grade 8",
+        "Precalculus": "Grade 7",
+        "Data Analysis": "Grade 8",
+        "Statistics": "Grade 7",
+        "Linear Algebra": "Grade 7"
+      },
+      "likesTheme": "Fast Food and Nutrition (McDonald's, Starbucks)",
+      "learningStyle": "Prefers visual aids and step-by-step walkthroughs."
+    },
+    {
+      "name": "Logan",
+      "educationLevel": "High School",
+      "satActTimeline": "0-2 years",
+      "mathMastery": {
+        "Algebra": "Grade 10",
+        "Geometry": "Grade 10",
+        "Trigonometry": "Grade 9",
+        "Precalculus": "Grade 10",
+        "Data Analysis": "Grade 9",
+        "Statistics": "Grade 10",
+        "Linear Algebra": "Grade 9"
+      },
+      "likesTheme": "Streaming Services (Netflix, Spotify)",
+      "learningStyle": "Prefers detailed solved examples and ample practice problems."
+    },
+    {
+      "name": "Sophia",
+      "educationLevel": "High School",
+      "satActTimeline": "0-2 years",
+      "mathMastery": {
+        "Algebra": "Grade 9",
+        "Geometry": "Grade 8",
+        "Trigonometry": "Grade 8",
+        "Precalculus": "Grade 9",
+        "Data Analysis": "Grade 7",
+        "Statistics": "Grade 7",
+        "Linear Algebra": "Grade 8"
+      },
+      "likesTheme": "Sneaker Culture and Shoe Design (Nike, Adidas)",
+      "learningStyle": "Prefers interactive questions and concise explanations."
+    },
+    {
+      "name": "Jackson",
+      "educationLevel": "High School",
+      "satActTimeline": "0-2 years",
+      "mathMastery": {
+        "Algebra": "Grade 10",
+        "Geometry": "Grade 9",
+        "Trigonometry": "Grade 10",
+        "Precalculus": "Grade 9",
+        "Data Analysis": "Grade 10",
+        "Statistics": "Grade 9",
+        "Linear Algebra": "Grade 10"
+      },
+      "likesTheme": "Music and Audio Tech (Beats by Dre, Auto-Tune)",
+      "learningStyle": "Prefers analogies and simplified real-world examples."
+    },
+    {
+      "name": "Mia",
+      "educationLevel": "High School",
+      "satActTimeline": "0-2 years",
+      "mathMastery": {
+        "Algebra": "Grade 8",
+        "Geometry": "Grade 8",
+        "Trigonometry": "Grade 8",
+        "Precalculus": "Grade 8",
+        "Data Analysis": "Grade 7",
+        "Statistics": "Grade 8",
+        "Linear Algebra": "Grade 7"
+      },
+      "likesTheme": "Theme Parks and Roller Coasters (Six Flags, Disney World)",
+      "learningStyle": "Prefers engaging stories and context-driven problem setups."
+    },
+    {
+      "name": "Lucas",
+      "educationLevel": "High School",
+      "satActTimeline": "0-2 years",
+      "mathMastery": {
+        "Algebra": "Grade 10",
+        "Geometry": "Grade 10",
+        "Trigonometry": "Grade 9",
+        "Precalculus": "Grade 10",
+        "Data Analysis": "Grade 9",
+        "Statistics": "Grade 8",
+        "Linear Algebra": "Grade 10"
+      },
+      "likesTheme": "Cars and Driving (Tesla, Electric Vehicles)",
+      "learningStyle": "Prefers concept summaries with bullet point explanations."
+    },
+    {
+      "name": "Isabella",
+      "educationLevel": "High School",
+      "satActTimeline": "0-2 years",
+      "mathMastery": {
+        "Algebra": "Grade 9",
+        "Geometry": "Grade 9",
+        "Trigonometry": "Grade 8",
+        "Precalculus": "Grade 9",
+        "Data Analysis": "Grade 8",
+        "Statistics": "Grade 8",
+        "Linear Algebra": "Grade 8"
+      },
+      "likesTheme": "Photography and Instagram Filters",
+      "learningStyle": "Prefers visual examples and creative problem scenarios."
+    }
+  ]
+}

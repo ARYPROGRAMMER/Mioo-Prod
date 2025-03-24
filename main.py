@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -1451,6 +1451,149 @@ async def shutdown_event():
 # Add user management routes
 app.include_router(user_router, tags=["users"])
 
+# Add these imports
+from training_manager import TrainingManager
+import uuid
+
+# Initialize training manager
+training_manager = TrainingManager()
+
+# Add new endpoints
+@app.post("/train/start")
+async def start_training(episodes: int = 2000):
+    """Start a new training session."""
+    training_id = str(uuid.uuid4())
+    
+    # Load persona data
+    with open('persona_data.json', 'r') as f:
+        persona_data = f.read()
+    
+    success = await training_manager.start_training(
+        training_id=training_id,
+        episodes=episodes,
+        persona_data=persona_data
+    )
+    
+    if success:
+        return {"training_id": training_id, "status": "started"}
+    else:
+        raise HTTPException(status_code=400, detail="Failed to start training")
+
+@app.get("/train/status/{training_id}")
+async def get_training_status(training_id: str):
+    """Get status of a training session."""
+    status = training_manager.get_training_status(training_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Training session not found")
+    return status
+
+@app.websocket("/train/ws/{training_id}")
+async def training_websocket(websocket: WebSocket, training_id: str):
+    """WebSocket endpoint for real-time training updates."""
+    try:
+        await training_manager.register_websocket(training_id, websocket)
+        while True:
+            data = await websocket.receive_text()
+            if not data:  # Connection closed
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        # Clean up connection
+        if training_id in training_manager.websocket_connections:
+            training_manager.websocket_connections.pop(training_id)
+
+@app.get("/user/{user_id}", response_model=UserState)
+async def get_user_state_endpoint(user_id: str):
+    """Get user state"""
+    try:
+        # Initialize state if user doesn't exist
+        if user_id not in user_states:
+            user_states[user_id] = UserState(user_id=user_id).model_dump()
+            await sync_with_db(user_id)
+        
+        # Load from DB if not in memory
+        await load_from_db(user_id)
+        
+        return user_states[user_id]
+    except Exception as e:
+        logger.error(f"Error getting user state: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get user state")
+
+@app.post("/user/{user_id}", response_model=UserState)
+async def update_user_state_endpoint(user_id: str, state: UserState):
+    """Update user state"""
+    try:
+        user_states[user_id] = state.model_dump()
+        await sync_with_db(user_id)
+        return user_states[user_id]
+    except Exception as e:
+        logger.error(f"Error updating user state: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update user state")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, loop="asyncio")
+
+import json
+import os
+import matplotlib.pyplot as plt
+import numpy as np
+import argparse
+from trainers.persona_trainer import PersonaTrainer
+
+def plot_rewards(rewards, filename='rewards_plot.png'):
+    """Plot the rewards history and save to file."""
+    plt.figure(figsize=(10, 6))
+    plt.plot(rewards)
+    plt.plot(np.convolve(rewards, np.ones(100)/100, mode='valid'), 'r-', linewidth=2)
+    plt.title('Training Rewards')
+    plt.xlabel('Episode')
+    plt.ylabel('Reward')
+    plt.grid(True)
+    plt.savefig(filename)
+    plt.close()
+
+def main():
+    parser = argparse.ArgumentParser(description='Train RL model on student personas')
+    parser.add_argument('--episodes', type=int, default=2000, help='Number of training episodes')
+    parser.add_argument('--output-dir', type=str, default='models', help='Directory to save models')
+    parser.add_argument('--evaluate', action='store_true', help='Evaluate model after training')
+    parser.add_argument('--personas-file', type=str, default='persona_data.json', help='Path to the persona data file')
+    args = parser.parse_args()
+    
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Load personas from file instead of hardcoded string
+    try:
+        with open(args.personas_file, 'r') as f:
+            persona_data = f.read()
+    except FileNotFoundError:
+        print(f"Error: Personas file {args.personas_file} not found.")
+        print("Creating default personas file...")
+        with open('persona_data.json', 'w') as f:
+            # Load the default personas from an included template
+            with open(os.path.join(os.path.dirname(__file__), 'templates', 'default_personas.json'), 'r') as template:
+                persona_data = template.read()
+                f.write(persona_data)
+    
+    # Initialize and train the model
+    trainer = PersonaTrainer(persona_data, model_dir=args.output_dir)
+    print(f"Training on {len(trainer.persona_manager.personas)} student personas for {args.episodes} episodes...")
+    
+    rewards = trainer.train(episodes=args.episodes)
+    
+    # Plot training rewards
+    plot_rewards(rewards, os.path.join(args.output_dir, 'training_rewards.png'))
+    
+    # Evaluate if requested
+    if args.evaluate:
+        print("\nEvaluating trained model...")
+        trainer.evaluate(num_evaluations=20)
+    
+    print(f"\nTraining completed. Models saved to {args.output_dir}")
+
+if __name__ == "__main__":
+    main()
+

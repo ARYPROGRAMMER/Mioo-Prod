@@ -14,6 +14,7 @@ import TeachingStrategyDisplay from "./TeachingStrategyDisplay";
 import ChatMessage from "./ChatMessage";
 import TopicKnowledgeGraph from "./TopicKnowledgeGraph";
 import { MetricsDisplay } from "./LearningMetrics";
+import { apiService } from '@/services/api';
 
 interface ChatInterfaceProps {
   userId: string;
@@ -104,39 +105,26 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: userMessage.content,
-          user_id: userId,
-        }),
+      const response = await apiService.sendChatMessage({
+        message: userMessage.content,
+        user_id: userId,
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data: ChatResponse = await response.json();
-      setCurrentStrategy(data.teaching_strategy);
-      setMetrics(data.metrics);
+      setCurrentStrategy(response.teaching_strategy);
+      setMetrics(response.metrics);
 
       const assistantMessage: Message = {
         role: "assistant",
-        content: data.response,
+        content: response.response,
         timestamp: new Date().toISOString(),
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
 
       // Update user state
-      const stateResponse = await fetch(`${API_BASE_URL}/user/${userId}`);
-      if (stateResponse.ok) {
-        const newState = await stateResponse.json();
-        setUserState(newState);
-      }
+      const newState = await apiService.getUserState(userId);
+      setUserState(newState);
+
     } catch (error) {
       console.error("Error:", error);
       setError("Failed to get response. Please try again.");

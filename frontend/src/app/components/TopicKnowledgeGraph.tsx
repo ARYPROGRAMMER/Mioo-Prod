@@ -9,6 +9,7 @@ import {
   PolarRadiusAxis,
   Radar,
 } from "recharts";
+import { apiService } from '@/services/api';
 
 interface TopicKnowledgeGraphProps {
   userId: string;
@@ -28,12 +29,8 @@ export default function TopicKnowledgeGraph({
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL}/learning-progress/${userId}`
-        );
-        const data = await response.json();
-
-        // Transform data into radar chart format
+        const data = await apiService.getLearningProgress(userId);
+        
         const formattedData = Object.entries(data.topics_in_progress || {}).map(
           ([topic, mastery]) => ({
             topic: topic.charAt(0).toUpperCase() + topic.slice(1),
