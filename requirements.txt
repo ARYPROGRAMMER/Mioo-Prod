@@ -4,7 +4,7 @@ pydantic==2.4.2
 pydantic-settings==2.0.3
 openai==1.66.3
 python-dotenv==1.0.0
-torch==2.0.1
+torch
 numpy==1.26.0
 pymongo==3.12.3
 motor==2.5.1
