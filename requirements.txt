@@ -6,8 +6,8 @@ openai==1.66.3
 python-dotenv==1.0.0
 torch
 numpy
-pymongo==3.12.3
-motor==2.5.1
+pymongo
+motor
 slowapi==0.1.8
 transformers==4.33.2
 sentence-transformers==2.2.2
