@@ -1,6 +1,6 @@
 fastapi==0.104.0
 uvicorn==0.23.2
-pydantic==2.4.2
+pydantic
 pydantic-settings==2.0.3
 openai==1.66.3
 python-dotenv==1.0.0
@@ -15,11 +15,3 @@ nest-asyncio==1.5.8
 tqdm==4.67.1
 matplotlib==3.9.4
 
-# Additional required dependencies
-aiohttp==3.8.6
-aiocache==0.12.3
-aiofiles==23.2.1
-scikit-learn==1.6.1
-pandas==2.2.3
-python-multipart==0.0.20
-typing_extensions==4.12.2
