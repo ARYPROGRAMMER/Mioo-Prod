@@ -5,7 +5,7 @@ pydantic-settings==2.0.3
 openai==1.66.3
 python-dotenv==1.0.0
 torch
-numpy==1.26.0
+numpy
 pymongo==3.12.3
 motor==2.5.1
 slowapi==0.1.8
