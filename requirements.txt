@@ -1,0 +1,27 @@
+# Web Framework
+fastapi
+uvicorn
+
+# Database
+motor
+pymongo
+
+# ML/DL
+torch
+numpy
+scikit-learn
+transformers
+
+# NLP
+nltk
+
+# OpenAI
+openai
+
+# Utils
+python-dotenv
+pydantic
+slowapi
+
+# Rate Limiting and CORS
+starlette
