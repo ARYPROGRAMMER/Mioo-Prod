@@ -19,10 +19,6 @@ matplotlib==3.9.4
 aiohttp==3.8.6
 aiocache==0.12.3
 aiofiles==23.2.1
-langchain==0.3.18
-langchain-community==0.3.17
-langchain-core==0.3.34
-scipy==1.13.1
 scikit-learn==1.6.1
 pandas==2.2.3
 python-multipart==0.0.20
