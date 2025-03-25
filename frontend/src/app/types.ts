@@ -67,7 +67,7 @@ export interface UserState {
 export interface MessageAnalysis {
   topic: string;
   complexity: number;
-  context: Record<string, any>;
+  context: Record<string, string>;
   learning_style: Record<string, number>;
   sentiment: number;
 }

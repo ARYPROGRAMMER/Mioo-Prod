@@ -89,8 +89,7 @@ export default function AdvancedMetrics({
         learningHistory={learningHistory}
       />
       <TopicKnowledgeGraph
-        topics={userState.recent_topics}
-        mastery={detailedMetrics?.topicMastery || {}}
+        userId={userState?.user_id}
       />
     </div>
   );

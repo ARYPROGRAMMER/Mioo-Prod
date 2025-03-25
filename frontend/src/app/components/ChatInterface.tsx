@@ -3,14 +3,11 @@
 import { useState, useEffect, useRef } from "react";
 import {
   Message,
-  ChatRequest,
   ChatResponse,
   TeachingStrategy,
   UserState,
   LearningMetrics,
 } from "../types";
-import AdvancedMetrics from "./AdvancedMetrics";
-import TeachingStrategyDisplay from "./TeachingStrategyDisplay";
 import ChatMessage from "./ChatMessage";
 import TopicKnowledgeGraph from "./TopicKnowledgeGraph";
 import { MetricsDisplay } from "./LearningMetrics";
@@ -29,6 +26,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
   const [currentStrategy, setCurrentStrategy] =
     useState<TeachingStrategy | null>(null);
   const [metrics, setMetrics] = useState<LearningMetrics | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [userState, setUserState] = useState<UserState>({
     user_id: userId,
     knowledge_level: 0.5,
@@ -49,7 +47,6 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
   });
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showMetrics, setShowMetrics] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -72,6 +69,7 @@ export default function ChatInterface({ userId }: ChatInterfaceProps) {
         setUserState(data);
         if (data.chat_history) {
           setMessages(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             data.chat_history.map((msg: any) => ({
               role: msg.role,
               content: msg.content,

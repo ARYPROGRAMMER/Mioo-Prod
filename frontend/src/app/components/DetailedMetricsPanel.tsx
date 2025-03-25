@@ -27,8 +27,7 @@ interface DetailedMetricsPanelProps {
 }
 
 export default function DetailedMetricsPanel({
-  metrics,
-  learningHistory,
+  metrics
 }: DetailedMetricsPanelProps) {
   if (!metrics) return null;
 
